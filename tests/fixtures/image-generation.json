@@ -1,0 +1,22 @@
+{
+  "note": "",
+  "request": {
+    "model": "grok-imagine-image-2.0",
+    "prompt": "a single red apple on a white table, studio light",
+    "n": 1
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "data": [
+        {
+          "url": "https://imgen.x.ai/xai-imgen/xai-tmp-imgen-a731df70-09dc-9782-85ae-43a9192dcf9a-e70c580f.jpeg",
+          "mime_type": "image/jpeg"
+        }
+      ],
+      "usage": {
+        "cost_in_usd_ticks": 600000000
+      }
+    }
+  }
+}

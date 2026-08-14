@@ -1,0 +1,628 @@
+{
+  "note": "Responses API + server-side tools; records citations + usage fields",
+  "request": {
+    "model": "grok-4.6",
+    "input": [
+      {
+        "role": "user",
+        "content": "In one sentence: one notable news item from this week."
+      }
+    ],
+    "tools": [
+      {
+        "type": "web_search"
+      },
+      {
+        "type": "x_search"
+      }
+    ]
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "created_at": 1786687587,
+      "completed_at": 1786687587,
+      "id": "5d530e03-fa90-9d9c-83b8-f227c0aadc0a",
+      "max_output_tokens": null,
+      "model": "grok-4.6",
+      "object": "response",
+      "output": [
+        {
+          "id": "rs_5d530e03-fa90-9d9c-83b8-f227c0aadc0a",
+          "summary": [
+            {
+              "text": "The question is: \"In one sentence: one notable news item from this week.\"\n",
+              "type": "summary_text"
+            }
+          ],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "id": "ws_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-0",
+          "type": "web_search_call",
+          "status": "completed",
+          "action": {
+            "type": "search",
+            "query": "notable news this week",
+            "sources": [
+              {
+                "type": "url",
+                "url": "https://www.npr.org/sections/national/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.nbcnews.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.theguardian.com/world"
+              },
+              {
+                "type": "url",
+                "url": "https://www.bbc.com/news/world"
+              },
+              {
+                "type": "url",
+                "url": "https://apnews.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.reuters.com/world/us/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.cbsnews.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://theweek.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.nytimes.com/section/us"
+              }
+            ]
+          }
+        },
+        {
+          "id": "ws_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-1",
+          "type": "web_search_call",
+          "status": "completed",
+          "action": {
+            "type": "search",
+            "query": "top headlines this week",
+            "sources": [
+              {
+                "type": "url",
+                "url": "https://www.npr.org/sections/news/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.nbcnews.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.reuters.com/world/us/"
+              },
+              {
+                "type": "url",
+                "url": "https://apnews.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://news.google.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.cbsnews.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.cnn.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.bbc.com/news/world"
+              },
+              {
+                "type": "url",
+                "url": "https://www.youtube.com/watch?v=Eyiw4BO0qHU"
+              }
+            ]
+          }
+        },
+        {
+          "id": "ws_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-2",
+          "type": "web_search_call",
+          "status": "completed",
+          "action": {
+            "type": "search",
+            "query": "current date",
+            "sources": [
+              {
+                "type": "url",
+                "url": "https://www.timeanddate.com/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.calendardate.com/todays.htm"
+              },
+              {
+                "type": "url",
+                "url": "https://isotropic.org/date/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.inchcalculator.com/what-is-todays-date/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.datetoday.net/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.rapidtables.com/tools/todays-date.html"
+              },
+              {
+                "type": "url",
+                "url": "https://www.youtube.com/watch?v=6wJHVOYn6cI"
+              },
+              {
+                "type": "url",
+                "url": "https://blankcalendarpages.com/todays-date"
+              },
+              {
+                "type": "url",
+                "url": "https://www.timeanddate.com/worldclock/"
+              }
+            ]
+          }
+        },
+        {
+          "id": "tco_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-0",
+          "summary": [],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "id": "tco_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-2",
+          "summary": [],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "id": "tco_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-1",
+          "summary": [],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "id": "ws_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-3",
+          "type": "web_search_call",
+          "status": "completed",
+          "action": {
+            "type": "search",
+            "query": "Kennedy Center Trump name vote August 2026",
+            "sources": [
+              {
+                "type": "url",
+                "url": "https://www.nytimes.com/2026/08/13/arts/design/kennedy-center-closure-board-vote-trump.html"
+              },
+              {
+                "type": "url",
+                "url": "https://abc7ny.com/post/kennedy-center-board-votes-close-renovations-add-president-donald-trumps-name-rep-joyce-beatty/19673779/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.facebook.com/KOAT7/posts/the-kennedy-center-board-voted-on-thursday-to-add-president-trumps-name-to-the-f/1524338529722171/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.cnbc.com/2026/08/13/kennedy-center-trump-name-beatty.html"
+              },
+              {
+                "type": "url",
+                "url": "https://www.instagram.com/p/Db_hYYwAc4H/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.npr.org/2026/08/13/nx-s1-5930349/kennedy-center-shut-down-board-vote-trump"
+              },
+              {
+                "type": "url",
+                "url": "https://www.washingtonpost.com/style/2026/08/13/kennedy-center-board-reapproves-trumps-plan-close-renovations/"
+              }
+            ]
+          }
+        },
+        {
+          "id": "ws_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-4",
+          "type": "web_search_call",
+          "status": "completed",
+          "action": {
+            "type": "search",
+            "query": "USS Abraham Lincoln conditions August 2026",
+            "sources": [
+              {
+                "type": "url",
+                "url": "https://www.nbcsandiego.com/news/local/concerning-conditions-reported-aboard-navy-carrier-based-in-san-diego/4059533/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.wsj.com/politics/national-security/u-s-sending-fresh-aircraft-carrier-to-middle-east-amid-iran-war-strain-d0d6e98d"
+              },
+              {
+                "type": "url",
+                "url": "https://www.youtube.com/watch?v=Lr-P7mkoDWU"
+              },
+              {
+                "type": "url",
+                "url": "https://www.wsws.org/en/articles/2026/08/12/nbrk-a12.html"
+              },
+              {
+                "type": "url",
+                "url": "https://www.wbir.com/article/news/nation-world/new-aircraft-carrier-heads-toward-mideast-issues-on-long-deployed-uss-lincoln/507-c70a008e-0bd7-4f75-a2b6-8cb783b5f695"
+              },
+              {
+                "type": "url",
+                "url": "https://www.facebook.com/votevets/posts/the-uss-abraham-lincoln-is-in-its-ninth-month-at-sea-208-days-without-a-port-vis/1530583845775923/"
+              },
+              {
+                "type": "url",
+                "url": "https://www.forbes.com/sites/petersuciu/2026/08/06/uss-abraham-lincoln-faces-poor-morale-from-twice-extended-deployment/"
+              }
+            ]
+          }
+        },
+        {
+          "id": "tco_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-3",
+          "summary": [],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "id": "tco_5d530e03-fa90-9d9c-83b8-f227c0aadc0a_call-aa2528ea-fef2-4c88-b40e-db88cb2b86bf-4",
+          "summary": [],
+          "type": "reasoning",
+          "status": "completed"
+        },
+        {
+          "content": [
+            {
+              "type": "output_text",
+              "text": "The Kennedy Center board voted this week to inscribe President Trump’s name on the building as “Restored and Renovated by President Donald J. Trump” and close the venue for two years of renovations, challenging a federal judge’s order.",
+              "logprobs": [],
+              "annotations": [
+                {
+                  "type": "url_citation",
+                  "url": "https://www.facebook.com/KOAT7/posts/the-kennedy-center-board-voted-on-thursday-to-add-president-trumps-name-to-the-f/1524338529722171/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.facebook.com/KOAT7/posts/the-kennedy-center-board-voted-on-thursday-to-add-president-trumps-name-to-the-f/1524338529722171/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.cbsnews.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.cbsnews.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://blankcalendarpages.com/todays-date",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://blankcalendarpages.com/todays-date"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.youtube.com/watch?v=Eyiw4BO0qHU",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.youtube.com/watch?v=Eyiw4BO0qHU"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.timeanddate.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.timeanddate.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.datetoday.net/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.datetoday.net/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.youtube.com/watch?v=Lr-P7mkoDWU",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.youtube.com/watch?v=Lr-P7mkoDWU"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.wsws.org/en/articles/2026/08/12/nbrk-a12.html",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.wsws.org/en/articles/2026/08/12/nbrk-a12.html"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.rapidtables.com/tools/todays-date.html",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.rapidtables.com/tools/todays-date.html"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.npr.org/sections/news/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.npr.org/sections/news/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.npr.org/2026/08/13/nx-s1-5930349/kennedy-center-shut-down-board-vote-trump",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.npr.org/2026/08/13/nx-s1-5930349/kennedy-center-shut-down-board-vote-trump"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.wsj.com/politics/national-security/u-s-sending-fresh-aircraft-carrier-to-middle-east-amid-iran-war-strain-d0d6e98d",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.wsj.com/politics/national-security/u-s-sending-fresh-aircraft-carrier-to-middle-east-amid-iran-war-strain-d0d6e98d"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://isotropic.org/date/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://isotropic.org/date/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.instagram.com/p/Db_hYYwAc4H/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.instagram.com/p/Db_hYYwAc4H/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://abc7ny.com/post/kennedy-center-board-votes-close-renovations-add-president-donald-trumps-name-rep-joyce-beatty/19673779/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://abc7ny.com/post/kennedy-center-board-votes-close-renovations-add-president-donald-trumps-name-rep-joyce-beatty/19673779/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.forbes.com/sites/petersuciu/2026/08/06/uss-abraham-lincoln-faces-poor-morale-from-twice-extended-deployment/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.forbes.com/sites/petersuciu/2026/08/06/uss-abraham-lincoln-faces-poor-morale-from-twice-extended-deployment/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.wbir.com/article/news/nation-world/new-aircraft-carrier-heads-toward-mideast-issues-on-long-deployed-uss-lincoln/507-c70a008e-0bd7-4f75-a2b6-8cb783b5f695",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.wbir.com/article/news/nation-world/new-aircraft-carrier-heads-toward-mideast-issues-on-long-deployed-uss-lincoln/507-c70a008e-0bd7-4f75-a2b6-8cb783b5f695"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.nytimes.com/2026/08/13/arts/design/kennedy-center-closure-board-vote-trump.html",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.nytimes.com/2026/08/13/arts/design/kennedy-center-closure-board-vote-trump.html"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.nbcsandiego.com/news/local/concerning-conditions-reported-aboard-navy-carrier-based-in-san-diego/4059533/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.nbcsandiego.com/news/local/concerning-conditions-reported-aboard-navy-carrier-based-in-san-diego/4059533/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.theguardian.com/world",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.theguardian.com/world"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.inchcalculator.com/what-is-todays-date/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.inchcalculator.com/what-is-todays-date/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.calendardate.com/todays.htm",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.calendardate.com/todays.htm"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://apnews.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://apnews.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.nbcnews.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.nbcnews.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://theweek.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://theweek.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.npr.org/sections/national/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.npr.org/sections/national/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.youtube.com/watch?v=6wJHVOYn6cI",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.youtube.com/watch?v=6wJHVOYn6cI"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.facebook.com/votevets/posts/the-uss-abraham-lincoln-is-in-its-ninth-month-at-sea-208-days-without-a-port-vis/1530583845775923/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.facebook.com/votevets/posts/the-uss-abraham-lincoln-is-in-its-ninth-month-at-sea-208-days-without-a-port-vis/1530583845775923/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.nytimes.com/section/us",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.nytimes.com/section/us"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.timeanddate.com/worldclock/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.timeanddate.com/worldclock/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.washingtonpost.com/style/2026/08/13/kennedy-center-board-reapproves-trumps-plan-close-renovations/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.washingtonpost.com/style/2026/08/13/kennedy-center-board-reapproves-trumps-plan-close-renovations/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.reuters.com/world/us/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.reuters.com/world/us/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://news.google.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://news.google.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.cnbc.com/2026/08/13/kennedy-center-trump-name-beatty.html",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.cnbc.com/2026/08/13/kennedy-center-trump-name-beatty.html"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.cnn.com/",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.cnn.com/"
+                },
+                {
+                  "type": "url_citation",
+                  "url": "https://www.bbc.com/news/world",
+                  "start_index": 0,
+                  "end_index": 0,
+                  "title": "https://www.bbc.com/news/world"
+                }
+              ]
+            }
+          ],
+          "id": "msg_5d530e03-fa90-9d9c-83b8-f227c0aadc0a",
+          "role": "assistant",
+          "type": "message",
+          "status": "completed"
+        }
+      ],
+      "parallel_tool_calls": true,
+      "previous_response_id": null,
+      "reasoning": {
+        "effort": "high",
+        "summary": "detailed"
+      },
+      "temperature": 0.7,
+      "text": {
+        "format": {
+          "type": "text"
+        }
+      },
+      "tool_choice": "auto",
+      "tools": [
+        {
+          "type": "web_search",
+          "search_context_size": "medium"
+        },
+        {
+          "type": "x_search"
+        }
+      ],
+      "top_p": 0.95,
+      "usage": {
+        "input_tokens": 29085,
+        "input_tokens_details": {
+          "cached_tokens": 14720
+        },
+        "output_tokens": 2067,
+        "output_tokens_details": {
+          "reasoning_tokens": 2013
+        },
+        "total_tokens": 31152,
+        "num_sources_used": 0,
+        "num_server_side_tools_used": 5,
+        "cost_in_usd_ticks": 734920000,
+        "server_side_tool_usage_details": {
+          "web_search_calls": 5,
+          "x_search_calls": 0,
+          "code_interpreter_calls": 0,
+          "file_search_calls": 0,
+          "mcp_calls": 0,
+          "document_search_calls": 0,
+          "image_generation_calls": 0
+        },
+        "context_details": {
+          "input_tokens": 16243,
+          "output_tokens": 320
+        }
+      },
+      "user": null,
+      "incomplete_details": null,
+      "status": "completed",
+      "store": true,
+      "metadata": {
+        "system_fingerprint": "fp_a7b4933f4a93564d"
+      },
+      "background": false,
+      "service_tier": "default",
+      "truncation": "disabled",
+      "top_logprobs": 0,
+      "presence_penalty": 0,
+      "frequency_penalty": 0,
+      "prompt_cache_key": null,
+      "max_tool_calls": null,
+      "safety_identifier": null,
+      "error": null,
+      "instructions": null
+    }
+  }
+}

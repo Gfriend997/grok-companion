@@ -120,6 +120,74 @@ README matches sibling structure exactly (read both gemini-companion and kimi-co
 - [ ] Update spec status → implemented; check off plan
 - [ ] Push all commits to Gfriend997/grok-companion (stays PRIVATE)
 
+## Gate-1 amendments (Codex plan review, 2026-08-13 — these override the tasks above where they conflict)
+
+**Task 1 is DONE** (probe run live by Claude): fixtures exist in `tests/fixtures/`
+(models, chat-minimal, vision-input, live-search, image-generation, video-_videos_generations,
+video-poll, artifact-download, error-bad-model) and `docs/PROBE_REPORT.md` summarizes them.
+Video flow: async `POST /v1/videos/generations` → `{request_id}`, poll `GET /v1/videos/{id}`
+→ `{status, progress, video:{url}, usage:{cost_in_usd_ticks}}` (ticks = USD × 1e10).
+Live Search: `POST /v1/responses` with `tools:[{type:"web_search"},{type:"x_search"}]` and
+`input` (NOT `messages`); citations = `url_citation` annotations; error schema flat `{code,error}`.
+`MEDIA_HOSTS = ["imgen.x.ai", "vidgen.x.ai"]`. No server-side video cancel found: `cancelJob`
+is local-abandon only for now.
+
+**Cross-module interface contract (binding):**
+
+```js
+// api.mjs
+requestAuthenticated(path, {method, body, signal})  // shared by chat/responses/media creates; exact-host api.x.ai
+chat({model, messages, maxTokens, signal}) -> {content, usage, raw}
+respond({model, input, tools, signal}) -> {content, citations:[{url,title}], usage, raw}  // /v1/responses for --live
+listModels() -> [{id, contextLength}]
+classifyError(status, bodyJson) -> {error_class, message, retryable}   // parses flat {code,error}
+
+// scrub.mjs
+scrubText(text) -> {text, maskedMatches}
+scrubDeep(value) -> value          // recursive, for job records + CLI JSON output
+preflight(text, {sourcePath}) -> {ok:true} | {ok:false, reason}
+
+// attach.mjs
+toParts(paths) -> {parts, tokenEstimate}   // throws {error_class:"usage"} on preflight/size/type failure
+stripExif(buf, "jpg"|"png") -> buf
+
+// jobs.mjs  (stateDir injectable: createJobStore({dir}) — tests use temp dir, prod uses homedir)
+job record schema: {id, kind, createdAt, state, providerJobId, request:{scrubbed}, idempotencyKey,
+                    result:{artifactPath, url, usageTicks}, error}
+states: created | submitted | submission_unknown | running | done | failed | unknown | abandoned
+createJob, recordSubmission, refresh(id, pollFn), listJobs, getJob, cancelJob, gc
+
+// media.mjs  (fetch + api client injectable)
+generateImage({prompt, sources, model}) -> {url|b64, raw}       // via requestAuthenticated
+createVideoJob({prompt, seconds, fromImage, model}) -> {providerJobId}
+pollVideo(providerJobId) -> {state, progress, url, usageTicks}   // maps status:"done" -> done
+downloadArtifact(url, outDir, {out}) -> {path, mime, bytes}      // NO auth header; MEDIA_HOSTS allowlist
+
+// grok-companion.mjs
+export main(argv, deps={api, media, jobs, scrub, attach, env, stdout})  // CLI wrapper injects prod deps
+selectModel(jobKind, flags, tokenEstimate) -> {model, fallbackApplied}
+```
+
+**Folded-in fixes:**
+- Prompts `prompts/*.md` move INTO Task 7 (Task 7 is self-contained; Task 8 references them).
+- Task 7 tests run `main(argv, deps)` in-process with fixture-backed fakes — offline. Every
+  command's happy path + each error_class exit code asserted this way.
+- Task 5 additions: injectable state dir (temp in tests), concurrent atomic-update test,
+  remote-cancel-failure test, Retry-After test, deadline→unknown test.
+- Task 2 additions: scrubDeep test; integration test asserting preflight-rejected content
+  never reaches the injected fake client (wired in Task 7's suite).
+- Task 6/7 additions: total attachment payload cap (100MiB warn at 80), max video `--seconds`
+  cap 30, `--out` never overwrites (suffix -1, -2), media default outDir
+  `~/.grok-companion/media`, `status`/`result` emit JSON only.
+- Task 9 additions: retention/cleanup section in README (jobs TTL 7d gc, media manual,
+  xAI-side retention unknown — noted), offline command listed per task: `node --test tests/`.
+- NEW Task 10b (before push): edit gemini-companion routing hook — demote raster-image
+  default to fallback with one line referencing grok-companion as primary; separate commit
+  in that repo (Gary already approved the swap); verify both hooks' emitted payloads state
+  the same precedence.
+- Task 8 additions: hook tests for key-present payload (version line + explicit override
+  statement) and key-absent degraded payload; stop-gate disabled default asserted.
+
 ## Verification (Claude runs, not implementer's word)
 
 `node --test tests/` all green; grep tracked files for `hkgar` and `xai-` (zero hits outside fixtures-scrubbed); each live command exit 0; JSON manifests parse; README renders on GitHub.

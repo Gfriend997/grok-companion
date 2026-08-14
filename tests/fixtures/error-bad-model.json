@@ -1,0 +1,20 @@
+{
+  "note": "",
+  "request": {
+    "model": "grok-nonexistent-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "max_tokens": 5
+  },
+  "response": {
+    "status": 400,
+    "body": {
+      "code": "invalid-argument",
+      "error": "Model not found: grok-nonexistent-model"
+    }
+  }
+}

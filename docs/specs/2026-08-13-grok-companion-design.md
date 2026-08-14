@@ -12,7 +12,17 @@ capabilities nobody in the current stack has — real-time Live Search / X Searc
 generation — plus competitive image generation that will take over the image-default role
 from Gemini. This plugin is the third sibling.
 
-## Capability findings (web research 2026-08-13, MUST be verified live before implementation)
+## Capability findings
+
+> **2026-08-13 live probe completed** — see `docs/PROBE_REPORT.md`; fixtures in
+> `tests/fixtures/` are authoritative. Corrections vs the research table below:
+> Live Search's `search_parameters` is HTTP 410 deprecated; the verified path is the
+> Agent Tools API (`POST /v1/responses`, `tools:[{type:"web_search"},{type:"x_search"}]`),
+> citations arrive as `url_citation` annotations, usage includes `num_sources_used` and
+> `cost_in_usd_ticks`. Video generation is async: `POST /v1/videos/generations` →
+> `{request_id}`, poll `GET /v1/videos/{request_id}`; $0.08/sec confirmed. Artifact hosts:
+> `imgen.x.ai` (images), `vidgen.x.ai` (video), downloads need no auth. Error schema is
+> flat `{code, error}`. Original research table (historical):
 
 | Question | Answer (research, unverified) |
 |---|---|

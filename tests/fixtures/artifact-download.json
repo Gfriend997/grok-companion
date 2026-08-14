@@ -1,0 +1,11 @@
+{
+  "note": "",
+  "request": {
+    "url": "(generated image url)"
+  },
+  "response": {
+    "status": 200,
+    "contentType": "image/jpeg",
+    "location": null
+  }
+}

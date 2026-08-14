@@ -1,0 +1,50 @@
+{
+  "note": "",
+  "request": {
+    "model": "grok-4.3",
+    "messages": "(generated image URL + question)",
+    "max_tokens": 10
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "id": "d4a4fe92-20a8-99fb-bc53-1947de2dc34b",
+      "object": "chat.completion",
+      "created": 1786687649,
+      "model": "grok-4.3",
+      "choices": [
+        {
+          "index": 0,
+          "message": {
+            "role": "assistant",
+            "content": "Apple",
+            "reasoning_content": "The user asked: \"One word: what fruit is in this image?\" and provided an image of a red apple.\n",
+            "refusal": null
+          },
+          "finish_reason": "stop"
+        }
+      ],
+      "usage": {
+        "prompt_tokens": 1230,
+        "completion_tokens": 1,
+        "total_tokens": 1336,
+        "prompt_tokens_details": {
+          "text_tokens": 204,
+          "audio_tokens": 0,
+          "image_tokens": 1026,
+          "cached_tokens": 128
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 105,
+          "audio_tokens": 0,
+          "accepted_prediction_tokens": 0,
+          "rejected_prediction_tokens": 0
+        },
+        "num_sources_used": 0,
+        "cost_in_usd_ticks": 16681000
+      },
+      "system_fingerprint": "fp_eb3c003fc66c14ed",
+      "service_tier": "default"
+    }
+  }
+}
