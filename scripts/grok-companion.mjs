@@ -41,7 +41,7 @@ function parse(argv) {
   const [command, ...rest] = argv;
   const flags = { file: [], source: [] };
   const positionals = [];
-  const booleanFlags = new Set(["live", "background", "allow-long-context", "wait", "coding"]);
+  const booleanFlags = new Set(["live", "background", "allow-long-context", "wait", "coding", "build-unavailable"]);
   for (let index = 0; index < rest.length; index += 1) {
     const item = rest[index];
     if (!item.startsWith("--")) { positionals.push(item); continue; }
@@ -61,7 +61,7 @@ export function selectModel(jobKind, flags = {}, _tokenEstimate = 0) {
       : jobKind === "adversarial-review" || jobKind === "rescue" && !flags.coding ? "grok-4.6"
         : jobKind === "rescue" && flags.coding ? "grok-build-0.1"
           : jobKind === "transfer" ? "grok-4.3" : "grok-4.3";
-  const fallback = selected === "grok-build-0.1" && flags.buildUnavailable;
+  const fallback = selected === "grok-build-0.1" && flags["build-unavailable"];
   return { model: fallback ? "grok-4.6" : selected, fallbackApplied: fallback };
 }
 
@@ -92,8 +92,15 @@ async function delegation(command, flags, prompt, deps) {
       input: [{ role: "system", content: LIVE_SYSTEM }, { role: "user", content: prompt }],
       tools: [{ type: "web_search" }, { type: "x_search" }]
     });
-    const citations = flags["max-sources"] ? response.citations.slice(0, Number(flags["max-sources"])) : response.citations;
-    write(deps, `[UNTRUSTED-EXTERNAL-CONTENT]\n${response.content}\n[/UNTRUSTED-EXTERNAL-CONTENT]\nSources:\n${citations.map((item) => `- ${item.title}: ${item.url}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}`);
+    let maxSources = response.citations.length;
+    if (flags["max-sources"] !== undefined) {
+      maxSources = Number(flags["max-sources"]);
+      if (!Number.isInteger(maxSources) || maxSources < 1) throw runtimeError("usage", "--max-sources must be a positive integer");
+    }
+    // Search content must not be able to close the envelope early.
+    const neutralize = (text) => String(text ?? "").replaceAll("[/UNTRUSTED-EXTERNAL-CONTENT]", "[\\/UNTRUSTED-EXTERNAL-CONTENT]");
+    const citations = response.citations.slice(0, maxSources);
+    write(deps, `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(response.content)}\n[/UNTRUSTED-EXTERNAL-CONTENT]\nSources:\n${citations.map((item) => `- ${neutralize(item.title)}: ${neutralize(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}`);
     return;
   }
   const message = attachment.content ? [...attachment.content, ...(prompt ? [{ type: "text", text: prompt }] : [])] : prompt;

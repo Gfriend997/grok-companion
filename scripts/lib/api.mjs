@@ -66,7 +66,8 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
       }
       const raw = await response.text();
       let parsed = {};
-      try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw runtimeError({ error_class: "network", message: "API returned non-JSON response", retryable: true }); }
+      // A delivered response with a garbage body may already be billed — never auto-retry it.
+      try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw runtimeError({ error_class: "network", message: "API returned non-JSON response", retryable: false }); }
       if (!response.ok) throw runtimeError(classifyError(response.status, parsed));
       return parsed;
     } finally {
