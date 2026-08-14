@@ -13,7 +13,7 @@ test("routing policy is key-aware, versioned, and explicitly overrides image rou
   const run = (env) => spawnSync(process.execPath, ["scripts/print-routing-policy.mjs"], { encoding: "utf8", env: { ...process.env, ...env } });
   const absent = run({ XAI_API_KEY: "" });
   assert.equal(absent.status, 0);
-  assert.match(absent.stdout, /grok-companion-routing-v1/);
+  assert.match(absent.stdout, /grok-companion-routing-v2/);
   assert.match(absent.stdout, /Gemini/);
   const present = run({ XAI_API_KEY: "test-key" });
   assert.equal(present.status, 0);
