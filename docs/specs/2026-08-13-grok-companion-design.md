@@ -1,7 +1,7 @@
 # grok-companion design spec
 
 Date: 2026-08-13
-Status: revised after Codex + Kimi adversarial challenge (2026-08-13); pending Gary's review
+Status: implemented (2026-08-14) — Codex built the runtime, Claude verified and wired dispatch gaps, Kimi gate-2 findings fixed in 062be1b; all commands live-verified against api.x.ai
 Author: Gary Wong + Claude (challenge reviews: Codex GPT-5.4, Kimi k3)
 
 ## Problem
