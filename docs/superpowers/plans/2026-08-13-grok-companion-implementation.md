@@ -4,7 +4,7 @@
 
 **Goal:** Ship the grok-companion Claude Code plugin: Grok delegation (ask/rescue/review/adversarial-review/transfer), Live Search, image generation, video generation, tested live against api.x.ai.
 
-**Architecture:** REST-only stdlib Node runtime mirroring kimi-companion (`C:\Users\hkgar\OneDrive\Documents\Plugins\kimi-companion` is the reference implementation — read its counterpart file before writing each module). New vs kimi: `media.mjs` (image/video generation + unauthenticated artifact downloader), provider-job state machine in `jobs.mjs`, `selectModel()` in the entry script, outbound secret preflight in `scrub.mjs`, untrusted-content envelope for `--live`.
+**Architecture:** REST-only stdlib Node runtime mirroring kimi-companion (the local kimi-companion checkout is the reference implementation — read its counterpart file before writing each module). New vs kimi: `media.mjs` (image/video generation + unauthenticated artifact downloader), provider-job state machine in `jobs.mjs`, `selectModel()` in the entry script, outbound secret preflight in `scrub.mjs`, untrusted-content envelope for `--live`.
 
 **Tech Stack:** Node ≥18 stdlib only (fetch, node:test). No npm dependencies. Markdown commands/skills/agents per Claude Code plugin schema (copy sibling layouts).
 
