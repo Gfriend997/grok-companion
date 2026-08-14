@@ -1,0 +1,11 @@
+{
+  "name": "grok-companion",
+  "owner": { "name": "Gary Wong" },
+  "plugins": [
+    {
+      "name": "grok-companion",
+      "source": "./",
+      "description": "Grok delegation, fresh research, image generation, and persistent video jobs for Claude Code."
+    }
+  ]
+}

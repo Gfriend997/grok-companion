@@ -1,0 +1,11 @@
+grok-companion
+
+Structure and command surface follow the author's gemini-companion plugin
+(MIT), https://github.com/Gfriend997/gemini-companion, and kimi-companion
+(MIT), https://github.com/Gfriend997/kimi-companion, which in turn were
+inspired by the OpenAI Codex plugin for Claude Code,
+https://github.com/openai/codex-plugin-cc (Apache License 2.0, Copyright
+OpenAI). No third-party source was copied; the runtime was written fresh
+against the xAI (Grok) REST API.
+
+Not affiliated with or endorsed by OpenAI or xAI.

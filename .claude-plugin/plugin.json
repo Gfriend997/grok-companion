@@ -1,0 +1,10 @@
+{
+  "name": "grok-companion",
+  "version": "0.1.0",
+  "description": "Use xAI Grok from Claude Code for delegation, live search, image generation, and video jobs. The API key remains in the environment.",
+  "author": { "name": "Gary Wong" },
+  "homepage": "https://github.com/Gfriend997/grok-companion",
+  "repository": "https://github.com/Gfriend997/grok-companion",
+  "license": "Apache-2.0",
+  "keywords": ["grok", "xai", "claude-code", "plugin", "live-search", "image", "video", "delegation"]
+}
