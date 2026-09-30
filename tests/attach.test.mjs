@@ -42,3 +42,34 @@ test("toParts propagates secret preflight rejection", () => {
   fs.writeFileSync(file("secret.txt"), "x" + "ai-" + "z".repeat(32));
   assert.throws(() => toParts([file("secret.txt")]), (error) => error.error_class === "usage" && /secret/.test(error.message));
 });
+
+const REJECT = /attachment rejected: .* is a binary document; convert it to markdown first \(MarkItDown\) and attach the \.md/;
+
+test("toParts rejects binary documents by upper-case extension", () => {
+  fs.writeFileSync(file("REPORT.PDF"), "plain");
+  assert.throws(() => toParts([file("REPORT.PDF")]), (e) => REJECT.test(e.message) && e.error_class === "usage");
+});
+
+test("toParts rejects binary documents by magic bytes despite a .txt extension", () => {
+  const magics = {
+    pdf: Buffer.from("%PDF-1.7\nabc"),
+    zip: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]),
+    ole: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00]),
+    rtf: Buffer.from("{\rtf1\ansi hello")
+  };
+  for (const [name, data] of Object.entries(magics)) {
+    fs.writeFileSync(file(`${name}.txt`), data);
+    assert.throws(() => toParts([file(`${name}.txt`)]), REJECT, name);
+  }
+});
+
+test("toParts rejects a NUL byte in the first 8 KB", () => {
+  fs.writeFileSync(file("blob.dat"), Buffer.concat([Buffer.from("text"), Buffer.from([0]), Buffer.from("more")]));
+  assert.throws(() => toParts([file("blob.dat")]), REJECT);
+});
+
+test("toParts still passes normal text and code files", () => {
+  fs.writeFileSync(file("code.ts"), "export const x = 1;\n");
+  fs.writeFileSync(file("notes.txt"), "hello");
+  assert.deepEqual(toParts([file("code.ts"), file("notes.txt")]).parts.map((p) => p.type), ["text", "text"]);
+});

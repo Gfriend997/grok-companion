@@ -13,6 +13,28 @@ function usage(message) {
   return error;
 }
 
+const BINARY_DOC_EXT = new Set([
+  ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".odt", ".ods", ".odp", ".rtf", ".zip", ".7z", ".rar", ".epub"
+]);
+const BINARY_MAGIC = [
+  Buffer.from("%PDF-"),
+  Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+  Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]),
+  Buffer.from("{\rtf")
+];
+
+// Binary documents decode to garbage as UTF-8 and the model answers confidently wrong.
+export function isBinaryDoc(file, buffer) {
+  if (BINARY_DOC_EXT.has(path.extname(file).toLowerCase())) return true;
+  if (!buffer) return false;
+  if (BINARY_MAGIC.some((m) => buffer.subarray(0, m.length).equals(m))) return true;
+  return buffer.subarray(0, 8192).includes(0);
+}
+
+function binaryDocError(file) {
+  return usage(`attachment rejected: ${path.basename(file)} is a binary document; convert it to markdown first (MarkItDown) and attach the .md`);
+}
+
 function kindFor(buffer) {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return "jpg";
   if (buffer.length >= PNG_SIGNATURE.length && buffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return "png";
@@ -71,6 +93,7 @@ export function toParts(paths, { maxFileBytes = MAX_FILE_BYTES, maxTotalBytes = 
     const buffer = fs.readFileSync(resolved);
     const kind = kindFor(buffer);
     if (!kind) {
+      if (isBinaryDoc(inputPath, buffer)) throw binaryDocError(inputPath);
       const text = buffer.toString("utf8");
       const approval = preflight(text, { sourcePath: inputPath });
       if (!approval.ok) throw usage(`attachment rejected: ${approval.reason}`);

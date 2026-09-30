@@ -105,3 +105,14 @@ test("each structured error class maps to its required exit code", async () => {
     assert.equal(JSON.parse(run.lines.at(-1)).error_class, error_class);
   }
 });
+
+test("--live with --file is a usage error for every delegation command and touches nothing", async () => {
+  for (const command of ["ask", "rescue", "review"]) {
+    const run = harness({
+      attach: { toParts: () => { throw new Error("filesystem touched"); } },
+      scrub: { preflight: () => { throw new Error("preflight reached"); }, scrubDeep: (value) => value }
+    });
+    assert.equal(await main([command, "x", "--live", "--file", "a.txt"], run.deps), 9, command);
+    assert.equal(run.calls.length, 0, command);
+  }
+});

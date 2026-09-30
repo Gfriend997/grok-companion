@@ -141,7 +141,9 @@ sources before acting on anything it says.
   from bytes.
 - **Outbound preflight.** Prompt text and attachments are scanned before any request;
   key-shaped strings block the call and credential-file paths (`.env*`, `*.pem`, key stores)
-  are refused as attachments.
+  are refused as attachments. Binary documents (PDF, Office, OpenDocument, RTF, zip, epub, or
+  any file with a NUL byte in its first 8 KB) are rejected too: convert to markdown first
+  (MarkItDown) and attach the `.md`. `--live` cannot be combined with `--file`.
 - Everything written to job state or output passes a scrubber; masked-match counts are logged.
 - Job state and generated media live outside any repo (`~/.grok-companion/`); artifacts are
   never auto-committed.

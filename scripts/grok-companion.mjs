@@ -83,6 +83,7 @@ function attachmentContent(deps, flags) {
 }
 
 async function delegation(command, flags, prompt, deps) {
+  if (flags.live && flags.file.length) throw runtimeError("usage", "--live cannot be combined with --file (live search sends only the prompt); ask without --live, or paste the needed text into the prompt");
   preflight(deps, prompt);
   const attachment = attachmentContent(deps, flags);
   const routing = selectModel(command, flags, attachment.tokenEstimate);
