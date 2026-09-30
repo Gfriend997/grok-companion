@@ -54,8 +54,7 @@ test("toParts rejects binary documents by magic bytes despite a .txt extension",
   const magics = {
     pdf: Buffer.from("%PDF-1.7\nabc"),
     zip: Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00]),
-    ole: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00]),
-    rtf: Buffer.from("{\rtf1\ansi hello")
+    ole: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1, 0x00])
   };
   for (const [name, data] of Object.entries(magics)) {
     fs.writeFileSync(file(`${name}.txt`), data);
@@ -72,4 +71,16 @@ test("toParts still passes normal text and code files", () => {
   fs.writeFileSync(file("code.ts"), "export const x = 1;\n");
   fs.writeFileSync(file("notes.txt"), "hello");
   assert.deepEqual(toParts([file("code.ts"), file("notes.txt")]).parts.map((p) => p.type), ["text", "text"]);
+});
+
+test("toParts decodes UTF-16 text files instead of rejecting them for NUL bytes", () => {
+  fs.writeFileSync(file("ps51-out.txt"), Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from("hello from powershell", "utf16le")]));
+  assert.match(toParts([file("ps51-out.txt")]).parts[0].text, /hello from powershell/);
+  fs.writeFileSync(file("be.txt"), Buffer.concat([Buffer.from([0xfe, 0xff]), Buffer.from("big endian", "utf16le").swap16()]));
+  assert.match(toParts([file("be.txt")]).parts[0].text, /big endian/);
+});
+
+test("toParts accepts RTF as text", () => {
+  fs.writeFileSync(file("note.rtf"), "{\rtf1\ansi hello}");
+  assert.match(toParts([file("note.rtf")]).parts[0].text, /hello/);
 });
