@@ -1,10 +1,13 @@
 # grok-companion
 
-Claude Code plugin that delegates work to xAI's Grok models: real-time Live Search and
-X Search, image generation, video generation, code review, adversarial review, delegated
-tasks, and background jobs. Third sibling to
+Claude Code and Codex plugins that delegate work to xAI's Grok models: real-time
+Live Search and X Search, image generation, video generation, code review,
+adversarial review, delegated tasks, and background jobs. Third sibling to
 [gemini-companion](https://github.com/Gfriend997/gemini-companion) and
 [kimi-companion](https://github.com/Gfriend997/kimi-companion).
+
+The Claude Code package lives at the repo root. The [Codex package](codex/README.md)
+lives in `codex/` and runs through an on-demand Node CLI, without an MCP server.
 
 The idea is not original. It is OpenAI's [codex-plugin-cc](https://github.com/openai/codex-plugin-cc),
 which established the pattern of driving a second model from inside Claude Code and set the
@@ -46,6 +49,8 @@ Developed and tested on Windows. POSIX code paths exist but are untested — rep
 
 ## Install
 
+### Claude Code
+
 In Claude Code:
 
 ```
@@ -70,6 +75,24 @@ Then verify the key and connectivity:
 `setup` reports key presence, API reachability, and the model list. It never prints the key
 value.
 
+### Codex
+
+```powershell
+codex plugin marketplace add Gfriend997/grok-companion
+codex plugin add grok-companion@grok-companion
+```
+
+Start a new chat and run `$grok-companion:setup`, or ask “Check Grok Companion setup.”
+The Codex skills use the same `XAI_API_KEY`; on Windows they privately load an existing
+user environment value into each child shell when needed. No server registration is
+required.
+
+Ask Codex to “Allocate Grok a bounded task using these two files; keep working on the
+UI.” Grok returns a proposal for Codex to check and apply. Text calls can run in Codex
+execution sessions while Codex continues other work; video jobs retain persistent IDs.
+Text sessions do not survive a host shutdown. See [Codex usage](codex/README.md) and
+the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
+
 ## Quick start
 
 ```
@@ -80,7 +103,7 @@ value.
 /grok-companion:rescue why does tests/jobs.test.mjs flake on CI?
 ```
 
-## Commands
+## Commands (Claude Code)
 
 | Command | What it does |
 |---|---|
@@ -157,6 +180,12 @@ sources before acting on anything it says.
 node --test tests/
 ```
 
+For the Codex package, from the repo root:
+
+```powershell
+node --test codex/tests/*.test.mjs
+```
+
 Offline suites run against live-captured fixtures (`tests/fixtures/`, see
 `docs/PROBE_REPORT.md`). Live end-to-end (uses your key, makes real API calls, media calls
 are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` plus
@@ -214,7 +243,7 @@ endorsed by OpenAI or xAI.
 
 ## Known limitations
 
-- **No autonomous file edits.** Diffs come back for Claude to apply.
+- **No autonomous file edits.** Diffs come back for Claude or Codex to apply.
 - No video *input* (understanding) — that is kimi-companion's job.
 - No voice endpoints wired up yet.
 - No server-side video cancel found on the API; `cancel` marks such jobs locally abandoned.

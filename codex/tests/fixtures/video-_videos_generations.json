@@ -1,0 +1,15 @@
+{
+  "note": "",
+  "request": {
+    "path": "/videos/generations",
+    "model": "grok-imagine-video-1.5",
+    "prompt": "a red apple rotating on a white table",
+    "duration": 2
+  },
+  "response": {
+    "status": 200,
+    "body": {
+      "request_id": "a7e0daaa-5c16-95ec-a1bc-18d7f4bf2131"
+    }
+  }
+}
