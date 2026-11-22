@@ -37,11 +37,36 @@ function unusedPath(dir, stem, extension) {
 export function createMedia({ apiClient = { requestAuthenticated: defaultRequest }, fetchImpl = globalThis.fetch } = {}) {
   async function generateImage({ prompt, sources = [], model }) {
     if (!Array.isArray(sources) || sources.length > 3) throw usage("image generation accepts at most 3 sources");
-    const body = { model, prompt, n: 1, ...(sources.length ? { images: sources } : {}) };
-    const raw = await apiClient.requestAuthenticated("/images/generations", { method: "POST", body });
+    const input = sources.length === 1 ? { image: { url: sources[0] } } : sources.length ? { images: sources.map((url) => ({ type: "image_url", url })) } : {};
+    const body = { model, prompt, n: 1, ...input };
+    const raw = await apiClient.requestAuthenticated(sources.length ? "/images/edits" : "/images/generations", { method: "POST", body });
     const item = raw?.data?.[0];
     if (!item?.url && !item?.b64_json) throw usage("image generation response has no artifact");
     return { ...(item.url ? { url: item.url } : { b64: item.b64_json }), raw };
+  }
+
+  function saveBase64(value, { out, outDir = DEFAULT_MEDIA_DIR, maxBytes = MAX_ARTIFACT_BYTES } = {}) {
+    if (typeof value !== "string") throw usage("invalid base64 image");
+    const text = value.replace(/\s/g, "");
+    if (text.length > Math.ceil(maxBytes / 3) * 4) throw usage("artifact is too large");
+    if (!text || text.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(text)) throw usage("invalid base64 image");
+    const bytes = Buffer.from(text, "base64");
+    if (bytes.length > maxBytes) throw usage("artifact is too large");
+    const type = sniff(bytes);
+    if (type.mime === "video/mp4") throw usage("base64 artifact must be an image");
+    fs.mkdirSync(outDir, { recursive: true });
+    const requested = out ? path.parse(path.basename(out)).name : "grok-image";
+    // The image is already billed: on a name collision with a concurrent run, take the next free name instead of failing.
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const target = unusedPath(outDir, requested || "grok-image", type.extension);
+      try {
+        fs.writeFileSync(target, bytes, { mode: 0o600, flag: "wx" });
+        return { path: target, mime: type.mime, bytes: bytes.length };
+      } catch (error) {
+        if (error?.code !== "EEXIST") throw error;
+      }
+    }
+    throw usage("could not find a free artifact file name");
   }
 
   async function createVideoJob({ prompt, seconds, fromImage, model }) {
@@ -82,7 +107,7 @@ export function createMedia({ apiClient = { requestAuthenticated: defaultRequest
     }
     throw usage("too many artifact redirects");
   }
-  return { generateImage, createVideoJob, pollVideo, downloadArtifact };
+  return { generateImage, createVideoJob, pollVideo, downloadArtifact, saveBase64 };
 }
 
 const defaultMedia = createMedia();
@@ -90,3 +115,4 @@ export const generateImage = defaultMedia.generateImage;
 export const createVideoJob = defaultMedia.createVideoJob;
 export const pollVideo = defaultMedia.pollVideo;
 export const downloadArtifact = defaultMedia.downloadArtifact;
+export const saveBase64 = defaultMedia.saveBase64;

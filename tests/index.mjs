@@ -1,6 +1,7 @@
 import "./api.test.mjs";
 import "./attach.test.mjs";
 import "./cli.test.mjs";
+import "./image-edits.test.mjs";
 import "./jobs.test.mjs";
 import "./media.test.mjs";
 import "./models.test.mjs";

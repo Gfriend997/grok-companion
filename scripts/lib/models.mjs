@@ -163,23 +163,29 @@ function eligible(entry, kind) {
   return entry.outputModalities.includes("text") && entry.capabilities.reasoningEffort.length > 0 && Number.isFinite(entry.prices.completion_text_token_price);
 }
 
-export function resolveRole(role, catalog) {
+export const acceptsImage = (entry) => entry.inputModalities.includes("image");
+
+export function resolveRole(role, catalog, { needsImageInput = false } = {}) {
   const kind = ROLE_KIND[role];
   if (!kind) throw routeError("usage", `unknown routing role: ${role}`);
   const state = catalog.kinds[kind];
   if (!state?.available) return { model: FALLBACK_ROUTES[role], routeSource: "fallback", modelVerified: false, priceChanged: null };
-  const pool = state.entries.filter((entry) => eligible(entry, kind)).sort(byNewest);
+  const fits = (entry) => !needsImageInput || acceptsImage(entry);
+  const pool = state.entries.filter((entry) => eligible(entry, kind) && fits(entry)).sort(byNewest);
   let chosen = null;
   if (role === "coding") {
     chosen = lookup(CODING_ALIAS, state.entries);
-    if (!chosen) return resolveRole("strong", catalog);
+    if (!chosen || !fits(chosen)) return resolveRole("strong", catalog, { needsImageInput });
   }
   if (!chosen && role === "fast" && pool.length) {
     const cheapest = Math.min(...pool.map((entry) => entry.prices.completion_text_token_price));
     chosen = pool.find((entry) => entry.prices.completion_text_token_price === cheapest);
   }
   if (!chosen && role !== "fast") chosen = pool[0] ?? null;
-  if (!chosen) chosen = lookup(FALLBACK_ROUTES[role], state.entries);
-  if (!chosen) throw routeError("capability_unavailable", `no listed ${kind} model fits the ${role} role; pass --model with a listed model`);
+  if (!chosen) {
+    const fallback = lookup(FALLBACK_ROUTES[role], state.entries);
+    if (fallback && fits(fallback)) chosen = fallback;
+  }
+  if (!chosen) throw routeError("capability_unavailable", `no listed ${kind} model fits the ${role} role${needsImageInput ? " with image input" : ""}; pass --model with a listed model`);
   return { model: chosen.id, routeSource: state.source, modelVerified: true, priceChanged: priceChangedFor(chosen, role) };
 }
