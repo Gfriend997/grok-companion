@@ -63,3 +63,30 @@ test("respond uses the captured responses API shape and extracts citations", asy
   assert.equal(result.content, "fresh");
   assert.deepEqual(result.citations, [{ url: "https://example.test", title: "Example" }]);
 });
+
+test("catalog-style requests pass the redirect policy and enforce a byte cap", async () => {
+  let seen;
+  const api = createApiClient({ env, fetchImpl: async (_url, init) => { seen = init; return ok({ models: [] }); } });
+  await api.requestAuthenticated("/language-models", { redirect: "error", maxBytes: 1000 });
+  assert.equal(seen.redirect, "error");
+  const defaults = createApiClient({ env, fetchImpl: async (_url, init) => { seen = init; return ok({}); } });
+  await defaults.requestAuthenticated("/models");
+  assert.equal(seen.redirect, undefined, "existing callers keep fetch defaults");
+  const big = createApiClient({ env, fetchImpl: async () => ok({ models: "x".repeat(2000) }) });
+  await assert.rejects(() => big.requestAuthenticated("/language-models", { maxBytes: 1000 }), (error) => error.error_class === "network" && /too large/.test(error.message));
+  const redirected = createApiClient({ env, fetchImpl: async () => { throw new TypeError("fetch failed: redirect mode is set to error"); } });
+  await assert.rejects(() => redirected.requestAuthenticated("/language-models", { redirect: "error" }), (error) => error.error_class === "network");
+});
+
+test("the byte cap cancels an oversized streamed body before buffering it", async () => {
+  let pulled = 0;
+  let cancelled = false;
+  const stream = new ReadableStream({
+    pull(controller) { pulled += 1; controller.enqueue(new Uint8Array(400)); if (pulled > 100) controller.close(); },
+    cancel() { cancelled = true; }
+  });
+  const api = createApiClient({ env, fetchImpl: async () => new Response(stream, { status: 200 }) });
+  await assert.rejects(() => api.requestAuthenticated("/language-models", { maxBytes: 1000 }), (error) => error.error_class === "network" && /too large/.test(error.message));
+  assert.equal(cancelled, true);
+  assert.ok(pulled < 10, `stopped early (pulled ${pulled} chunks)`);
+});

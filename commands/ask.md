@@ -1,6 +1,6 @@
 ---
 description: Ask Grok, optionally with named attachments or fresh web and X search
-argument-hint: "[--file <path>]... [--live] [--max-sources <n>] [--model <m>] <question>"
+argument-hint: "[--file <path>]... [--live] [--max-sources <n>] [--model <id-or-alias>] <question>"
 allowed-tools: Bash(node:*)
 ---
 

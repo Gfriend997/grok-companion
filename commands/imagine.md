@@ -1,6 +1,6 @@
 ---
 description: Generate or edit a raster image with Grok
-argument-hint: "[--source <image>]... [--out <name>] <prompt>"
+argument-hint: "[--source <image>]... [--out <name>] [--model <id-or-alias>] <prompt>"
 allowed-tools: Bash(node:*)
 ---
 
