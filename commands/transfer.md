@@ -1,6 +1,6 @@
 ---
 description: Transfer a concise session briefing to Grok
-argument-hint: "[--file <path>]... <briefing>"
+argument-hint: "[--file <path>]... [--model <id-or-alias>] <briefing>"
 allowed-tools: Bash(node:*)
 ---
 

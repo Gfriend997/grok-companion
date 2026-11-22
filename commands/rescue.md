@@ -1,6 +1,6 @@
 ---
 description: Ask Grok for a diagnosis or bounded coding rescue
-argument-hint: "[--coding] [--file <path>]... <task>"
+argument-hint: "[--coding] [--file <path>]... [--model <id-or-alias>] <task>"
 allowed-tools: Bash(node:*), Agent
 ---
 

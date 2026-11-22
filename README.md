@@ -72,8 +72,9 @@ Then verify the key and connectivity:
 /grok-companion:setup
 ```
 
-`setup` reports key presence, API reachability, and the model list. It never prints the key
-value.
+`setup` reports key presence and API reachability. It also lists every model in your
+account's live xAI catalog (kind, aliases, modalities, listed prices) and the model each job
+role resolves to right now. It never prints the key value.
 
 ### Codex
 
@@ -107,7 +108,7 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 
 | Command | What it does |
 |---|---|
-| `/grok-companion:setup` | Check key presence + API reachability + model list; `--gate on\|off` toggles the stop-review gate |
+| `/grok-companion:setup` | Check key presence + API reachability + live model catalog and resolved routes; `--gate on\|off` toggles the stop-review gate |
 | `/grok-companion:ask` | One question; `--file` (repeatable) attaches text/jpg/png; `--live` enables Live Search + X Search |
 | `/grok-companion:review` | Grok reviews your current diff (falls back to last commit) |
 | `/grok-companion:adversarial-review` | Hostile review pass hunting for breakage |
@@ -124,20 +125,33 @@ Common flags: `--model` (overrides automatic selection), `--max-tokens`, `--max-
 
 ## Models — selected per job, not fixed
 
-The runtime picks the model from the job type (`selectModel`); `--model` always wins.
+The runtime reads your account's live xAI model catalog (`/v1/language-models`,
+`/v1/image-generation-models`, `/v1/video-generation-models`), caches it for 24 hours at
+`~/.grok-companion/models.json`, and picks a model by job role. New xAI models are used
+without a plugin update, and retired ones stop being defaults. **There is no price limit:**
+when xAI releases a newer, pricier model, the strong, image and video roles move to it.
 
-| Job | Model | Why |
-|---|---|---|
-| ask, quick question | grok-4.3 | 1M context, half the price of 4.6 |
-| ask over large attached files | grok-4.3 | 1M context |
-| ask --live | grok-4.6 | best reasoning over fresh data |
-| review | grok-4.3 | volume work |
-| adversarial-review | grok-4.6 | quality matters |
-| rescue (debug/diagnosis) | grok-4.6 | hardest reasoning |
-| rescue (bounded coding task) | grok-build-0.1 | coding-tuned, cheapest |
-| transfer | grok-4.3 | session context can be huge |
-| imagine | grok-imagine-image-2.0 | $0.04/image |
-| video | grok-imagine-video-1.5 | $0.08/second |
+| Job | Role | Rule | Today (2026-11-21) |
+|---|---|---|---|
+| ask, review, transfer | fast | cheapest price tier, newest model in it | grok-4.3 |
+| ask --live, adversarial-review, rescue | strong | newest model, any price | grok-4.7 |
+| rescue --coding | coding | xAI's `grok-build-latest` alias, else strong | grok-4.5 |
+| imagine | image | newest non-`-lite` image model | grok-imagine-image-2.0 |
+| video | video | newest non-`-lite` video model | grok-imagine-video-1.5 |
+
+Language models must list a completion price and advertise `reasoning_effort` to be routed.
+If the catalog can't be fetched (and no cache under 7 days old exists), the built-in
+fallback IDs above are used.
+
+Every result reports `model`, `routeSource` (`flag`, `env`, `live`, `cache`, `cache-stale`,
+`fallback`), `modelVerified`, and `priceChanged`. `priceChanged` is true when the model's
+listed price differs from the 2026-11-21 price for its role. For `--live`, these appear on a
+`Route:` line after the untrusted-content envelope.
+
+Overrides: `--model <id-or-alias>` accepts any catalog model of the right kind, and rejects
+unknown or wrong-kind models before any billed request. Pin a role with the environment
+variables `GROK_COMPANION_MODEL_FAST`, `_STRONG`, `_CODING`, `_IMAGE` or `_VIDEO`; `--model`
+wins over a pin. `--build-unavailable` is accepted but no longer needed.
 
 ## Cost guards
 

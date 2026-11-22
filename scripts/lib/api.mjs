@@ -42,7 +42,7 @@ function parseResponse(body) {
 }
 
 export function createApiClient({ fetchImpl = globalThis.fetch, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
-  async function requestAuthenticated(path, { method = "GET", body, signal, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS } = {}) {
+  async function requestAuthenticated(path, { method = "GET", body, signal, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, redirect, maxBytes } = {}) {
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
       throw runtimeError({ error_class: "usage", message: "path must start with a single slash", retryable: false });
     }
@@ -59,12 +59,34 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
           method,
           headers: { Authorization: `Bearer ${key}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
           body: body === undefined ? undefined : JSON.stringify(body),
-          signal: controller.signal
+          signal: controller.signal,
+          ...(redirect ? { redirect } : {})
         });
       } catch (cause) {
         throw runtimeError({ error_class: "network", message: cause?.name === "AbortError" ? "API request timed out" : "API network request failed", retryable: true });
       }
-      const raw = await response.text();
+      const tooLarge = () => runtimeError({ error_class: "network", message: "API response is too large", retryable: false });
+      if (maxBytes !== undefined && Number(response.headers?.get?.("content-length")) > maxBytes) throw tooLarge();
+      let raw;
+      if (maxBytes !== undefined && response.body?.getReader) {
+        // Count decoded bytes while streaming so an oversized body is cancelled, not buffered.
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        for (;;) {
+          let step;
+          try { step = await reader.read(); } catch { throw runtimeError({ error_class: "network", message: "API response read failed", retryable: false }); }
+          const { done, value } = step;
+          if (done) break;
+          total += value.byteLength;
+          if (total > maxBytes) { await reader.cancel().catch(() => {}); throw tooLarge(); }
+          chunks.push(value);
+        }
+        raw = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+      } else {
+        raw = await response.text();
+        if (maxBytes !== undefined && Buffer.byteLength(raw) > maxBytes) throw tooLarge();
+      }
       let parsed = {};
       // A delivered response with a garbage body may already be billed — never auto-retry it.
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw runtimeError({ error_class: "network", message: "API returned non-JSON response", retryable: false }); }

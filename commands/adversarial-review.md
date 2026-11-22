@@ -1,6 +1,6 @@
 ---
 description: Request a hostile Grok second-pass review
-argument-hint: "[--model <m>] <scope or diff>"
+argument-hint: "[--model <id-or-alias>] <scope or diff>"
 allowed-tools: Bash(node:*)
 ---
 

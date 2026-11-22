@@ -1,6 +1,6 @@
 ---
 description: Create a persisted Grok video job
-argument-hint: "--seconds <1-30> [--from-image <path>] [--wait] <prompt>"
+argument-hint: "--seconds <1-30> [--from-image <path>] [--wait] [--model <id-or-alias>] <prompt>"
 allowed-tools: Bash(node:*)
 ---
 

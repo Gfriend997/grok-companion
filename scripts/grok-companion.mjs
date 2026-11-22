@@ -4,8 +4,10 @@ import * as mediaRuntime from "./lib/media.mjs";
 import * as jobsRuntime from "./lib/jobs.mjs";
 import * as scrubRuntime from "./lib/scrub.mjs";
 import * as attachRuntime from "./lib/attach.mjs";
+import * as modelsRuntime from "./lib/models.mjs";
 import { pathToFileURL, fileURLToPath } from "node:url";
 import { readFileSync, existsSync } from "node:fs";
+import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { spawnSync } from "node:child_process";
 
@@ -54,16 +56,48 @@ function parse(argv) {
   return { command, flags, prompt: positionals.join(" ").trim() };
 }
 
-export function selectModel(jobKind, flags = {}, _tokenEstimate = 0) {
-  if (flags.model) return { model: flags.model, fallbackApplied: false };
-  const selected = jobKind === "ask" ? (flags.live ? "grok-4.6" : "grok-4.3")
-    : jobKind === "review" ? "grok-4.3"
-      : jobKind === "adversarial-review" || jobKind === "rescue" && !flags.coding ? "grok-4.6"
-        : jobKind === "rescue" && flags.coding ? "grok-build-0.1"
-          : jobKind === "transfer" ? "grok-4.3" : "grok-4.3";
-  const fallback = selected === "grok-build-0.1" && flags["build-unavailable"];
-  return { model: fallback ? "grok-4.6" : selected, fallbackApplied: fallback };
+const ROLE_ENV = { fast: "GROK_COMPANION_MODEL_FAST", strong: "GROK_COMPANION_MODEL_STRONG", coding: "GROK_COMPANION_MODEL_CODING", image: "GROK_COMPANION_MODEL_IMAGE", video: "GROK_COMPANION_MODEL_VIDEO" };
+
+export function roleFor(command, flags = {}) {
+  if (command === "ask") return flags.live ? "strong" : "fast";
+  if (command === "adversarial-review") return "strong";
+  if (command === "rescue") return flags.coding ? "coding" : "strong";
+  if (command === "imagine") return "image";
+  if (command === "video") return "video";
+  return "fast";
 }
+
+// Catalog loader memoized for one invocation; `refetch`/`fresh` force a new load.
+function catalogContext(deps) {
+  let cached;
+  return async (options = {}) => {
+    if (cached && !options.refetch && !options.fresh) return cached;
+    cached = await deps.models.loadCatalog({ request: deps.api.requestAuthenticated, env: deps.env, home: deps.home, ...options });
+    return cached;
+  };
+}
+
+// Precedence: --model, then the role's env pin, then the live/cached/fallback role route.
+export async function selectModel(role, flags, ctx) {
+  const { models } = ctx;
+  const explicit = flags.model ?? ctx.env?.[ROLE_ENV[role]];
+  if (!explicit) return models.resolveRole(role, await ctx.catalog());
+  const routeSource = flags.model ? "flag" : "env";
+  const kind = models.ROLE_KIND[role];
+  let catalog = await ctx.catalog();
+  let found = models.findModel(explicit, kind, catalog);
+  if (found.error === "unknown" && catalog.kinds[kind].source !== "live") {
+    catalog = await ctx.catalog({ refetch: true });
+    found = models.findModel(explicit, kind, catalog);
+    if (catalog.kinds[kind].source !== "live") found = { unverified: true };
+  }
+  if (found.unverified) return { model: explicit, routeSource, modelVerified: false, priceChanged: null };
+  if (found.error === "wrong_kind") throw runtimeError("usage", `${explicit} is not a ${kind} model`);
+  if (found.error === "unknown") throw runtimeError("capability_unavailable", `${explicit} is not in this account's xAI model catalog`);
+  return { model: explicit, routeSource, modelVerified: true, priceChanged: models.priceChangedFor(found.entry, role) };
+}
+
+const routeMeta = ({ model, routeSource, modelVerified, priceChanged }) => ({ model, routeSource, modelVerified, priceChanged });
 
 function preflight(deps, text) {
   const result = deps.scrub.preflight(text);
@@ -86,7 +120,7 @@ async function delegation(command, flags, prompt, deps) {
   if (flags.live && flags.file.length) throw runtimeError("usage", "--live cannot be combined with --file (live search sends only the prompt); ask without --live, or paste the needed text into the prompt");
   preflight(deps, prompt);
   const attachment = attachmentContent(deps, flags);
-  const routing = selectModel(command, flags, attachment.tokenEstimate);
+  const routing = await selectModel(roleFor(command, flags), flags, deps.ctx);
   if (flags.live) {
     const response = await deps.api.respond({
       model: routing.model,
@@ -101,14 +135,16 @@ async function delegation(command, flags, prompt, deps) {
     // Search content must not be able to close the envelope early.
     const neutralize = (text) => String(text ?? "").replaceAll("[/UNTRUSTED-EXTERNAL-CONTENT]", "[\\/UNTRUSTED-EXTERNAL-CONTENT]");
     const citations = response.citations.slice(0, maxSources);
-    write(deps, `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(response.content)}\n[/UNTRUSTED-EXTERNAL-CONTENT]\nSources:\n${citations.map((item) => `- ${neutralize(item.title)}: ${neutralize(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}`);
+    // Citation fields print outside the envelope, so one line each: no injected `Route:` or envelope lines.
+    const oneLine = (text) => neutralize(text).replace(/[\r\n\u2028\u2029]+/g, " ");
+    write(deps, `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(response.content)}\n[/UNTRUSTED-EXTERNAL-CONTENT]\nSources:\n${citations.map((item) => `- ${oneLine(item.title)}: ${oneLine(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}\nRoute: ${JSON.stringify(routeMeta(routing))}`);
     return;
   }
   const message = attachment.content ? [...attachment.content, ...(prompt ? [{ type: "text", text: prompt }] : [])] : prompt;
   const preset = loadPreset(command);
   const messages = [...(preset ? [{ role: "system", content: preset }] : []), { role: "user", content: message }];
   const response = await deps.api.chat({ model: routing.model, messages });
-  write(deps, { model: routing.model, fallbackApplied: routing.fallbackApplied, content: response.content, usage: response.usage ?? {} });
+  write(deps, { ...routeMeta(routing), content: response.content, usage: response.usage ?? {} });
 }
 
 async function commandVideo(flags, prompt, deps) {
@@ -116,23 +152,24 @@ async function commandVideo(flags, prompt, deps) {
   const seconds = Number(flags.seconds);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw runtimeError("usage", "--seconds must be an integer from 1 to 30");
   preflight(deps, prompt);
-  write(deps, `${seconds} × $0.08 = $${(seconds * 0.08).toFixed(2)}`);
-  const id = deps.jobs.createJob({ kind: "video", request: { prompt, seconds } });
+  const route = routeMeta(await selectModel("video", flags, deps.ctx));
+  write(deps, `${seconds} × $0.08 = $${(seconds * 0.08).toFixed(2)} (unverified estimate; actual price depends on model ${route.model})`);
+  const id = deps.jobs.createJob({ kind: "video", request: { prompt, seconds, ...route } });
   try {
-    const created = await deps.media.createVideoJob({ prompt, seconds, fromImage: flags["from-image"], model: flags.model ?? "grok-imagine-video-1.5" });
+    const created = await deps.media.createVideoJob({ prompt, seconds, fromImage: flags["from-image"], model: route.model });
     deps.jobs.recordSubmission(id, created.providerJobId);
     if (flags.wait) {
       const provider = await deps.jobs.pollWithBackoff(() => deps.media.pollVideo(created.providerJobId));
       const job = await deps.jobs.refresh(id, async () => provider);
       if (job.state === "done" && job.result?.url) {
         const artifact = await deps.media.downloadArtifact(job.result.url, undefined, { out: flags.out });
-        write(deps, { ...job, result: { ...job.result, artifactPath: artifact.path } });
+        write(deps, { ...job, ...route, result: { ...job.result, artifactPath: artifact.path } });
         return;
       }
-      write(deps, job);
+      write(deps, { ...job, ...route });
       return;
     }
-    write(deps, { id, state: "submitted", providerJobId: created.providerJobId });
+    write(deps, { id, state: "submitted", providerJobId: created.providerJobId, ...route });
   } catch (error) {
     deps.jobs.recordSubmission(id, "submission_unknown");
     throw error;
@@ -153,16 +190,18 @@ async function commandImagine(flags, prompt, deps) {
   const sourceParts = flags.source.length ? deps.attach.toParts(flags.source).parts : [];
   if (sourceParts.some((part) => part.type !== "image_url")) throw runtimeError("usage", "--source accepts image files only");
   const sources = sourceParts.map((part) => part.image_url.url);
-  const result = await deps.media.generateImage({ prompt, sources, model: flags.model ?? "grok-imagine-image-2.0" });
-  if (result.url) write(deps, await deps.media.downloadArtifact(result.url, undefined, { out: flags.out }));
-  else write(deps, { b64: result.b64 });
+  const route = routeMeta(await selectModel("image", flags, deps.ctx));
+  const result = await deps.media.generateImage({ prompt, sources, model: route.model });
+  if (result.url) write(deps, { ...(await deps.media.downloadArtifact(result.url, undefined, { out: flags.out })), ...route });
+  else write(deps, { b64: result.b64, ...route });
 }
 
 export async function main(argv, suppliedDeps = {}) {
   const deps = {
-    api: apiRuntime, media: mediaRuntime, jobs: jobsRuntime, scrub: scrubRuntime, attach: attachRuntime,
-    env: process.env, stdout: process.stdout, ...suppliedDeps
+    api: apiRuntime, media: mediaRuntime, jobs: jobsRuntime, scrub: scrubRuntime, attach: attachRuntime, models: modelsRuntime,
+    env: process.env, home: homedir(), stdout: process.stdout, ...suppliedDeps
   };
+  deps.ctx = { models: deps.models, env: deps.env, catalog: catalogContext(deps) };
   try {
     const { command, flags, prompt } = parse(argv);
     if (!command) throw runtimeError("usage", "missing command");
@@ -194,9 +233,20 @@ export async function main(argv, suppliedDeps = {}) {
       write(deps, await deps.jobs.cancelJob(flags.id));
     } else if (command === "setup") {
       const keyPresent = Boolean(deps.env.XAI_API_KEY);
-      const models = keyPresent ? await deps.api.listModels() : [];
-      write(deps, { keyPresent, apiReachable: keyPresent, models, stopReviewGate: false, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
-      if (!keyPresent) return EXIT_CODES.auth;
+      if (!keyPresent) {
+        write(deps, { keyPresent, apiReachable: false, models: [], routes: {}, stopReviewGate: false, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
+        return EXIT_CODES.auth;
+      }
+      const catalog = await deps.ctx.catalog({ fresh: true });
+      const kinds = Object.values(catalog.kinds);
+      if (kinds.some((state) => state.error === "auth")) throw runtimeError("auth", "xAI rejected the API key (catalog request returned 401/403)");
+      const models = kinds.flatMap((state) => state.entries.map(({ id, kind, aliases, inputModalities, outputModalities, prices }) => ({ id, kind, aliases, inputModalities, outputModalities, prices })));
+      const routes = {};
+      for (const role of Object.keys(deps.models.ROLE_KIND)) {
+        try { routes[role] = routeMeta(await selectModel(role, {}, deps.ctx)); } catch (error) { routes[role] = { error_class: error.error_class ?? "usage", message: String(error.message) }; }
+      }
+      const catalogSources = Object.fromEntries(Object.entries(catalog.kinds).map(([kind, state]) => [kind, state.source]));
+      write(deps, { keyPresent, apiReachable: kinds.every((state) => state.source === "live"), catalogSources, models, routes, stopReviewGate: false, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
     } else throw runtimeError("usage", `unknown command: ${command}`);
     return 0;
   } catch (error) {

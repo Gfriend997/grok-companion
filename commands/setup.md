@@ -1,5 +1,5 @@
 ---
-description: Verify the Grok key, API reachability, models, and routing policy
+description: Verify the Grok key, API reachability, the live model catalog, and resolved model routes
 argument-hint: ""
 allowed-tools: Bash(node:*)
 ---

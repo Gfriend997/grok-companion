@@ -35,7 +35,7 @@ function unusedPath(dir, stem, extension) {
 }
 
 export function createMedia({ apiClient = { requestAuthenticated: defaultRequest }, fetchImpl = globalThis.fetch } = {}) {
-  async function generateImage({ prompt, sources = [], model = "grok-imagine-image-2.0" }) {
+  async function generateImage({ prompt, sources = [], model }) {
     if (!Array.isArray(sources) || sources.length > 3) throw usage("image generation accepts at most 3 sources");
     const body = { model, prompt, n: 1, ...(sources.length ? { images: sources } : {}) };
     const raw = await apiClient.requestAuthenticated("/images/generations", { method: "POST", body });
@@ -44,7 +44,7 @@ export function createMedia({ apiClient = { requestAuthenticated: defaultRequest
     return { ...(item.url ? { url: item.url } : { b64: item.b64_json }), raw };
   }
 
-  async function createVideoJob({ prompt, seconds, fromImage, model = "grok-imagine-video-1.5" }) {
+  async function createVideoJob({ prompt, seconds, fromImage, model }) {
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw usage("video seconds must be an integer from 1 to 30");
     const body = { model, prompt, duration: seconds, ...(fromImage ? { image: fromImage } : {}) };
     const raw = await apiClient.requestAuthenticated("/videos/generations", { method: "POST", body });
