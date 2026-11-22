@@ -78,10 +78,10 @@ function catalogContext(deps) {
 }
 
 // Precedence: --model, then the role's env pin, then the live/cached/fallback role route.
-export async function selectModel(role, flags, ctx) {
+export async function selectModel(role, flags, ctx, { needsImageInput = false } = {}) {
   const { models } = ctx;
   const explicit = flags.model ?? ctx.env?.[ROLE_ENV[role]];
-  if (!explicit) return models.resolveRole(role, await ctx.catalog());
+  if (!explicit) return models.resolveRole(role, await ctx.catalog(), { needsImageInput });
   const routeSource = flags.model ? "flag" : "env";
   const kind = models.ROLE_KIND[role];
   let catalog = await ctx.catalog();
@@ -94,6 +94,7 @@ export async function selectModel(role, flags, ctx) {
   if (found.unverified) return { model: explicit, routeSource, modelVerified: false, priceChanged: null };
   if (found.error === "wrong_kind") throw runtimeError("usage", `${explicit} is not a ${kind} model`);
   if (found.error === "unknown") throw runtimeError("capability_unavailable", `${explicit} is not in this account's xAI model catalog`);
+  if (needsImageInput && !models.acceptsImage(found.entry)) throw runtimeError("usage", `${explicit} does not accept image input`);
   return { model: explicit, routeSource, modelVerified: true, priceChanged: models.priceChangedFor(found.entry, role) };
 }
 
@@ -120,7 +121,8 @@ async function delegation(command, flags, prompt, deps) {
   if (flags.live && flags.file.length) throw runtimeError("usage", "--live cannot be combined with --file (live search sends only the prompt); ask without --live, or paste the needed text into the prompt");
   preflight(deps, prompt);
   const attachment = attachmentContent(deps, flags);
-  const routing = await selectModel(roleFor(command, flags), flags, deps.ctx);
+  const needsImageInput = (attachment.content ?? []).some((part) => part?.type === "image_url");
+  const routing = await selectModel(roleFor(command, flags), flags, deps.ctx, { needsImageInput });
   if (flags.live) {
     const response = await deps.api.respond({
       model: routing.model,
@@ -152,7 +154,7 @@ async function commandVideo(flags, prompt, deps) {
   const seconds = Number(flags.seconds);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw runtimeError("usage", "--seconds must be an integer from 1 to 30");
   preflight(deps, prompt);
-  const route = routeMeta(await selectModel("video", flags, deps.ctx));
+  const route = routeMeta(await selectModel("video", flags, deps.ctx, { needsImageInput: Boolean(flags["from-image"]) }));
   write(deps, `${seconds} × $0.08 = $${(seconds * 0.08).toFixed(2)} (unverified estimate; actual price depends on model ${route.model})`);
   const id = deps.jobs.createJob({ kind: "video", request: { prompt, seconds, ...route } });
   try {
@@ -189,11 +191,12 @@ async function commandImagine(flags, prompt, deps) {
   preflight(deps, prompt);
   const sourceParts = flags.source.length ? deps.attach.toParts(flags.source).parts : [];
   if (sourceParts.some((part) => part.type !== "image_url")) throw runtimeError("usage", "--source accepts image files only");
+  if (sourceParts.length > 3) throw runtimeError("usage", "image generation accepts at most 3 sources");
   const sources = sourceParts.map((part) => part.image_url.url);
-  const route = routeMeta(await selectModel("image", flags, deps.ctx));
+  const route = routeMeta(await selectModel("image", flags, deps.ctx, { needsImageInput: sources.length > 0 }));
   const result = await deps.media.generateImage({ prompt, sources, model: route.model });
-  if (result.url) write(deps, { ...(await deps.media.downloadArtifact(result.url, undefined, { out: flags.out })), ...route });
-  else write(deps, { b64: result.b64, ...route });
+  const saved = result.url ? await deps.media.downloadArtifact(result.url, undefined, { out: flags.out }) : deps.media.saveBase64(result.b64, { out: flags.out });
+  write(deps, { ...saved, ...route });
 }
 
 export async function main(argv, suppliedDeps = {}) {

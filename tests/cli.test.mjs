@@ -35,7 +35,8 @@ function harness(overrides = {}, { catalog, home = newHome(), env = {} } = {}) {
       generateImage: async (request) => { calls.push(request); return { b64: "AA==" }; },
       createVideoJob: async (request) => { calls.push(request); return { providerJobId: "p1" }; },
       pollVideo: async () => ({ state: "done", progress: 100, url: "https://vidgen.x.ai/v.mp4", usageTicks: 1 }),
-      downloadArtifact: async () => ({ path: "out.jpg", mime: "image/jpeg", bytes: 2 })
+      downloadArtifact: async () => ({ path: "out.jpg", mime: "image/jpeg", bytes: 2 }),
+      saveBase64: () => ({ path: "saved.png", mime: "image/png", bytes: 1 })
     },
     jobs: {
       createJob: (job) => { jobsCreated.push(job); return "local-1"; }, recordSubmission: () => {}, refresh: async () => ({ state: "done" }), listJobs: () => [], getJob: () => ({ id: "local-1", state: "done" }), cancelJob: async () => ({ id: "local-1", state: "abandoned" })
@@ -139,7 +140,7 @@ test("imagine and video carry route metadata; video stores it on the job", async
   const image = harness({}, { catalog: "fixture" });
   assert.equal(await main(["imagine", "apple"], image.deps), 0);
   assert.equal(image.calls[0].model, "grok-imagine-image-2.0");
-  assert.deepEqual(last(image), { b64: "AA==", model: "grok-imagine-image-2.0", routeSource: "live", modelVerified: true, priceChanged: false });
+  assert.deepEqual(last(image), { path: "saved.png", mime: "image/png", bytes: 1, model: "grok-imagine-image-2.0", routeSource: "live", modelVerified: true, priceChanged: false });
   const video = harness({}, { catalog: "fixture" });
   assert.equal(await main(["video", "apple", "--seconds", "2"], video.deps), 0);
   assert.match(video.lines[0], /^2 × \$0\.08 = \$0\.16 \(unverified estimate; actual price depends on model grok-imagine-video-1\.5\)$/);

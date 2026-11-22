@@ -113,7 +113,7 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 | `/grok-companion:review` | Grok reviews your current diff (falls back to last commit) |
 | `/grok-companion:adversarial-review` | Hostile review pass hunting for breakage |
 | `/grok-companion:rescue` | Delegate a task; Grok returns a plan and diffs for Claude to apply |
-| `/grok-companion:imagine` | Generate or edit an image; `--source` (≤3, repeatable) for editing/compositing |
+| `/grok-companion:imagine` | Generate or edit an image; `--source` (≤3, repeatable) sends an edit to `/images/edits`. Results are saved locally, including base64 results |
 | `/grok-companion:video` | Generate a video; `--seconds` required, `--from-image` for image-to-video; background job by default, `--wait` for foreground |
 | `/grok-companion:status` | List background jobs (`--id` for one), JSON output |
 | `/grok-companion:result` | Fetch a finished job's output / download its artifact |
@@ -140,6 +140,8 @@ when xAI releases a newer, pricier model, the strong, image and video roles move
 | video | video | newest non-`-lite` video model | grok-imagine-video-1.5 |
 
 Language models must list a completion price and advertise `reasoning_effort` to be routed.
+With an image attachment, `--source` or `--from-image`, only models whose catalog entry accepts image
+input are considered. An explicit `--model` without image input exits 9 before any billed request.
 If the catalog can't be fetched (and no cache under 7 days old exists), the built-in
 fallback IDs above are used.
 
