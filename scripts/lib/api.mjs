@@ -42,7 +42,7 @@ function parseResponse(body) {
 }
 
 export function createApiClient({ fetchImpl = globalThis.fetch, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
-  async function requestAuthenticated(path, { method = "GET", body, signal, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, redirect, maxBytes } = {}) {
+  async function requestAuthenticated(path, { method = "GET", body, signal, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, redirect = "error", maxBytes } = {}) {
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
       throw runtimeError({ error_class: "usage", message: "path must start with a single slash", retryable: false });
     }
@@ -60,7 +60,8 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
           headers: { Authorization: `Bearer ${key}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
           body: body === undefined ? undefined : JSON.stringify(body),
           signal: controller.signal,
-          ...(redirect ? { redirect } : {})
+          // The bearer key must never be re-sent to a redirect target.
+          redirect
         });
       } catch (cause) {
         throw runtimeError({ error_class: "network", message: cause?.name === "AbortError" ? "API request timed out" : "API network request failed", retryable: true });

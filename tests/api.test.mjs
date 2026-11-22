@@ -71,7 +71,7 @@ test("catalog-style requests pass the redirect policy and enforce a byte cap", a
   assert.equal(seen.redirect, "error");
   const defaults = createApiClient({ env, fetchImpl: async (_url, init) => { seen = init; return ok({}); } });
   await defaults.requestAuthenticated("/models");
-  assert.equal(seen.redirect, undefined, "existing callers keep fetch defaults");
+  assert.equal(seen.redirect, "error", "authenticated requests refuse redirects by default");
   const big = createApiClient({ env, fetchImpl: async () => ok({ models: "x".repeat(2000) }) });
   await assert.rejects(() => big.requestAuthenticated("/language-models", { maxBytes: 1000 }), (error) => error.error_class === "network" && /too large/.test(error.message));
   const redirected = createApiClient({ env, fetchImpl: async () => { throw new TypeError("fetch failed: redirect mode is set to error"); } });
