@@ -47,7 +47,7 @@
   5. No image or video requests. Record each request's `usage` cost and the total.
 - [x] T020 Get an independent review of the finished diff, fix the findings, and record convergence.
 
-- [ ] T021 Commit on a feature branch, and push to `Gfriend997/grok-companion`.
-- [ ] T022 Write the follow-up notes for the `codex/` copy: what needs fixing, with file:line references. Post them as a GitHub issue on `Gfriend997/grok-companion`.
+- [x] T021 Commit on a feature branch, and push to `Gfriend997/grok-companion`. Done: commit `ede8542` on `001-live-model-discovery`, PR #2.
+- [x] T022 Write the follow-up notes for the `codex/` copy: what needs fixing, with file:line references. Post them as a GitHub issue on `Gfriend997/grok-companion`. Done: issue #1.
 
 Out of scope: changing `codex/` code, the `tests/` working-directory fix, version bump and release.
