@@ -83,12 +83,16 @@ function readCache(file, fingerprint) {
 }
 
 function writeCache(file, data) {
+  let temporary;
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true });
-    const temporary = `${file}.${crypto.randomUUID()}.tmp`;
+    temporary = `${file}.${crypto.randomUUID()}.tmp`;
     fs.writeFileSync(temporary, JSON.stringify(data), { encoding: "utf8", mode: 0o600 });
     fs.renameSync(temporary, file);
-  } catch { /* A cache write failure must never block a command. */ }
+  } catch {
+    // A cache write failure must never block a command; do not leave the temp file behind.
+    if (temporary) { try { fs.rmSync(temporary, { force: true }); } catch { /* ignore */ } }
+  }
 }
 
 // xAI answers an invalid key with HTTP 400 "Incorrect API key provided", which api.mjs classes as usage.
@@ -99,9 +103,15 @@ function discoveryErrorClass(reason) {
 }
 
 // Options: fresh bypasses cache and the negative window (setup); refetch bypasses only the cache (unknown --model).
-export async function loadCatalog({ request, env = process.env, home = os.homedir(), now = Date.now, fresh = false, refetch = false } = {}) {
+// `only` limits loading to the listed kinds (a refetch of one role's kind); other kinds come back unavailable.
+export async function loadCatalog({ request, env = process.env, home = os.homedir(), now = Date.now, fresh = false, refetch = false, only } = {}) {
   const kinds = Object.fromEntries(Object.keys(KINDS).map((kind) => [kind, { available: false, source: "none", entries: [] }]));
   if (!env.XAI_API_KEY) return { kinds };
+  // No request function means no discovery: fail every kind without touching the cache file.
+  if (typeof request !== "function") {
+    for (const kind of Object.keys(KINDS)) kinds[kind].error = "network";
+    return { kinds };
+  }
   const file = path.join(home, ".grok-companion", "models.json");
   const fingerprint = keyFingerprint(env.XAI_API_KEY);
   const cache = readCache(file, fingerprint) ?? { version: 1, fingerprint, kinds: {}, failedAt: {} };
@@ -114,17 +124,15 @@ export async function loadCatalog({ request, env = process.env, home = os.homedi
     if (cached && within(cached.fetchedAt, STALE_MS)) kinds[kind] = { available: true, source: "cache-stale", entries: cached.entries, ...(error ? { error } : {}) };
     else if (error) kinds[kind].error = error;
   };
-  for (const kind of Object.keys(KINDS)) {
+  for (const kind of only ?? Object.keys(KINDS)) {
     const cached = cache.kinds[kind];
     if (!fresh && !refetch && cached && within(cached.fetchedAt, FRESH_MS)) kinds[kind] = { available: true, source: "cache", entries: cached.entries };
-    else if (!fresh && within(cache.failedAt[kind], NEGATIVE_MS)) useStale(kind);
+    else if (!fresh && within(cache.failedAt[kind], NEGATIVE_MS)) useStale(kind, "network");
     else toFetch.push(kind);
   }
   if (!toFetch.length) return { kinds };
-  const results = await Promise.allSettled(toFetch.map(async (kind) => {
-    if (typeof request !== "function") throw new Error("no request function");
-    return normalize(await request(KINDS[kind], { timeoutMs: FETCH_TIMEOUT_MS, redirect: "error", maxBytes: MAX_CATALOG_BYTES }), kind);
-  }));
+  const results = await Promise.allSettled(toFetch.map(async (kind) =>
+    normalize(await request(KINDS[kind], { timeoutMs: FETCH_TIMEOUT_MS, redirect: "error", maxBytes: MAX_CATALOG_BYTES }), kind)));
   toFetch.forEach((kind, index) => {
     const result = results[index];
     if (result.status === "fulfilled") {

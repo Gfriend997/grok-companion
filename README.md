@@ -164,14 +164,18 @@ route was used.
 Overrides: `--model <id-or-alias>` accepts any catalog model of the right kind, and rejects
 unknown or wrong-kind models before any billed request. Pin a role with the environment
 variables `GROK_COMPANION_MODEL_FAST`, `_STRONG`, `_CODING`, `_IMAGE` or `_VIDEO`; `--model`
-wins over a pin. `--build-unavailable` is accepted but no longer needed.
+wins over a pin. A pin is trimmed, and a pin of spaces only is ignored. An id missing from the
+cached catalog makes one request for that model kind only, at most once per command.
+`--build-unavailable` is accepted but no longer needed.
 
 ## Cost guards
 
 - `video` requires an explicit `--seconds` (capped) and `--confirm-cost`. Without the flag it exits 9
   with the estimate (`<seconds> × $0.08`, a starting rate measured on 2026-08-13 for one model; the
   real price varies by model and resolution) and sends nothing. Add the flag only after the user
-  approves; the run then prints the cost line before dispatch.
+  approves; the run then prints the cost line before dispatch. With `--from-image` (a local path
+  or an `https://` URL) the estimate adds a flat $0.01 image input charge (`2 × $0.08 + $0.01 image input = $0.17`).
+  Measured on 2026-11-22: a 1-second image-to-video job cost $0.09 and a 2-second one $0.17.
 - `--max-tokens` caps billed output tokens only when it is given. There is no default limit, and
   a cut answer is not marked.
 - A `--background` run costs the same as a foreground one: one request. It is billed even if the
@@ -187,7 +191,7 @@ wins over a pin. `--build-unavailable` is accepted but no longer needed.
   | Category | Path word stems and files | Changed-line words |
   |---|---|---|
   | auth | auth, login, signin, oauth, sso, session, jwt, password, passwd, permission, rbac, acl | password, authenticat, authoriz, jwt, oauth, bcrypt, argon2, set-cookie |
-  | secrets | secret, credential, token, apikey, keystore, vault; `.env*`, `*.pem`, `*.key`, `*.pfx`, file names holding `api_key`, `api-key`, `apikey`, `private_key`, `private-key` or `privatekey` | secret, credential, and `api key`, `private key`, `access token` written with a space, `_`, `-` or nothing between the words |
+  | secrets | secret, credential, token, apikey, keystore, vault; the credential file names of the Security model (`.env`, `x.env`, `.env.local`, `.envrc`, `*.pem`, `*.key`, `*.pfx`, `*.p12`, `*.ppk`, `*.jks`, `*.keystore`, `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, `.npmrc`, `.netrc`, `_netrc`, `.pypirc`), file names holding `api_key`, `api-key`, `apikey`, `private_key`, `private-key` or `privatekey` | secret, credential, and `api key`, `private key`, `access token` written with a space, `_`, `-` or nothing between the words |
   | data | database, db, storage, backup, delete, purge | drop table/database/column/schema, truncate, delete from, rm -rf, rmSync, unlink, Remove-Item, deleteMany, destroy_all |
   | money | payment, billing, invoice, checkout, stripe, paypal, pricing, refund, subscription, ledger, payout | payment, invoice, refund, stripe, paypal, billing, payout |
   | migration | migration, migrate, schema, prisma, alembic; `*.sql` | create/alter table, add column, migration |
@@ -241,14 +245,21 @@ sources before acting on anything it says.
   auth header, revalidate redirects against the allowlist, cap download size, and sniff MIME
   from bytes.
 - **Outbound preflight.** Prompt text and attachments are scanned before any request;
-  key-shaped strings block the call and credential-file paths (`.env*`, `*.pem`, key stores)
-  are refused for every attachment, image or text (`--file`, `imagine --source`,
-  `video --from-image`), on the path as given and on its real path. Binary documents (PDF, Office, OpenDocument, zip, epub, or
+  key-shaped strings block the call and credential-file paths are refused for every attachment,
+  image or text (`--file`, `imagine --source`, `video --from-image`, `speak --text-file`,
+  `transcribe --file`), on the path as given and on its real path. Refused: `id_rsa`, `id_dsa`,
+  `id_ecdsa`, `id_ed25519` and `credentials` anywhere in the path; a path ending in `.pem`,
+  `.key`, `.pfx`, `.p12`, `.ppk`, `.jks` or `.keystore`; the file names `.npmrc`, `.netrc`,
+  `_netrc` and `.pypirc`; and `.env` or `.envrc` as a whole dot-separated part of the file name
+  (`.env`, `.env.local`, `x.env`, `x.env.png`). `.env-prod`, `.env_local`, `.env2` and
+  `a.environment.png` are allowed; their text is still scanned for secrets. Binary documents (PDF, Office, OpenDocument, zip, epub, or
   any file with a NUL byte in its first 8 KB) are rejected too: convert to markdown first
   (MarkItDown) and attach the `.md`. `--live` cannot be combined with `--file`.
 - Everything written to job state or output passes a scrubber; masked-match counts are logged.
 - Job state and generated media live outside any repo (`~/.grok-companion/`); artifacts are
-  never auto-committed.
+  never auto-committed. A job record is kept for 7 days after its last write once the job is
+  finished (`done`, `failed` or `abandoned`; a `submission_unknown` job is kept), then a bare `status` deletes
+  it with its claim and answer files. Saved media are never deleted.
 - EXIF metadata is stripped from images before upload.
 - Grok's output is treated as untrusted: commands relay it verbatim and never auto-execute
   it. `rescue` returns diffs rather than editing files, so a human sees every write.
@@ -279,7 +290,9 @@ are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` 
 | `410` mentioning Live Search | You are on an old fork sending `search_parameters`; current builds use the Agent Tools API on `/v1/responses`. Update the plugin. |
 | Request refused with a long-context message | Estimated ≥200K tokens; xAI bills the whole request at ~2x above that line. Trim attachments or pass `--allow-long-context` deliberately. |
 | `video` refuses to run | `--seconds` is required and capped. Without `--confirm-cost` it exits 9 with the estimate and sends nothing: ask the user, then add the flag. |
-| `video --from-image` refused | A local value must be a JPEG or PNG file of at most 20 MiB whose path holds no credential word; any other value must start with `https://`. `http://` and other schemes are refused. Nothing is sent. |
+| `setup` exits 2 with a `message` field | xAI rejected the key for every model catalog (HTTP 400, 401 or 403). Check `XAI_API_KEY`. The full report is still printed. |
+| `setup` shows one kind under `catalogSources` with an `error_class` | That one catalog failed (`cache-stale` uses the cached list, `fallback` the built-in route). Setup still exits 0. |
+| `video --from-image` refused | A local value must be a JPEG or PNG file of at most 20 MiB whose path holds no credential name (see Security model); any other value must start with `https://`. `http://` and other schemes are refused. Nothing is sent. |
 | Artifact download refused | The URL's host is outside the allowlist (`imgen.x.ai`, `vidgen.x.ai`). That is the security model working, not a bug. |
 | Slash commands missing after install | Marketplace changes need a session restart. |
 
@@ -312,7 +325,7 @@ binary responses; one attempt per request), `attach.mjs` (files → content part
 strip), `media.mjs` (image, video and speech generation, transcription with audio checks,
 unauthenticated artifact downloads),
 `jobs.mjs` (job store for async video and background text jobs, with locked writes that never
-overwrite a finished job; `GROK_JOBS_DIR` selects its folder, default `~/.grok-companion/jobs`), `risk.mjs` (the
+overwrite a finished job, and pruning of finished records and leftover side files; `GROK_JOBS_DIR` selects its folder, default `~/.grok-companion/jobs`), `risk.mjs` (the
 stop-review gate's risky-diff rule), `scrub.mjs` (masking + outbound preflight). Design and verification history: `docs/specs/`, `docs/PROBE_REPORT.md`.
 
 ## Credits
@@ -349,8 +362,9 @@ endorsed by OpenAI or xAI.
   timed-out review is not retried for that diff, and the gate blocks only one stop per stop
   sequence.
 - `--from-image`: the whole image (up to 20 MiB) is sent as base64 in the request body; only
-  JPEG and PNG are accepted; an `https://` URL is sent as typed, on any host; the cost estimate
-  does not rise for an image input. A path check cannot prove that an image shows no secret,
+  JPEG and PNG are accepted; an `https://` URL is sent as typed, on any host; the flat $0.01
+  image input charge rests on two measurements (1 and 2 seconds) with one small 256×256 PNG; a
+  larger image may cost more. A path check cannot prove that an image shows no secret,
   and a file in a folder whose name holds a credential word is refused whatever it contains.
 - `result` trusts the stored video path: if the file was moved or deleted it still prints that
   path, and a later `--out` is ignored. A failure after `video --wait` submits leaves the job
@@ -359,12 +373,31 @@ endorsed by OpenAI or xAI.
   `job is busy; retry the local operation`; run the command again (nothing is re-sent). A
   background worker retries the lock for up to 60 seconds. If its final write still fails, for
   that or any other reason, it saves its answer to `<id>.answer.json`, which `status` and
-  `result` apply. Lock and answer files left by a killed
-  process are not pruned.
+  `result` apply. A bare `status` prunes the jobs folder: claim and answer files older than 1
+  hour whose job is finished or gone, stale lock files, and leftover temp files. It never touches
+  the record, claim or answer of a `created`, `running`, `submitted`, `unknown` or
+  `submission_unknown` job, nor a file the store did not name itself, nor a lock
+  that is held. When it deletes anything it first prints one `{"pruned":{...}}` line with the
+  counts; the job list is always the last line. A job that never finishes is never pruned.
 - The strong role takes the newest model in the highest price tier, so it can cost more than
   under 0.1.5 once xAI releases a newer model below the top tier, and a newer cheaper model is
   never used for strong without `--model` or a pin.
 - A background job's worker can be stopped only when its process command line can be read
   (PowerShell on Windows, `ps` elsewhere); otherwise `cancel` abandons the job locally and the
   worker ends by itself within about 5 minutes. The job record keeps the prompt, file paths and
-  answer under `~/.grok-companion/jobs` until deleted.
+  answer under `~/.grok-companion/jobs` until 7 days after the job finished. Then a bare `status`
+  deletes it: an unread paid answer older than 7 days is lost, and `result --id` of a deleted
+  video job says the job is not found (its saved file stays).
+- Pruning: a bare `status` is no longer read-only, and nothing prunes if it never runs. The age
+  is the job file's modification time, so a copied or restored jobs folder starts its 7 days
+  again. The 7 days cannot be configured.
+- Credential names are a name list, not a content check: a key in `notes.txt` is caught only when
+  its text is secret-shaped. Each name can refuse a harmless file (a `.keystore` test fixture, an
+  Apple Keynote `.key`, an `id_ed25519.pub` public key). `.env-prod`, `.env_local`, `.env2`,
+  `.envs` and `.environment` are allowed and no longer make a diff risky by name. A hard link to
+  a credential file cannot be detected, and NTFS alternate data stream names were not checked.
+- `setup`: a key that xAI rejects for one catalog and accepts for the others exits 0; the report
+  shows it under `catalogSources`. A script that read `catalogSources.<kind>` as a string must
+  read `.source` now.
+- No external cancel signal, no size cap on an error body without `maxBytes`, and no race of a
+  body read against the timeout beyond what Node's fetch does (spec 007 D7, D8).

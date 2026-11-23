@@ -10,4 +10,5 @@ import "./models.test.mjs";
 import "./packaging.test.mjs";
 import "./parity-gaps.test.mjs";
 import "./scrub.test.mjs";
+import "./setup-catalog-credentials.test.mjs";
 import "./speak-transcribe.test.mjs";

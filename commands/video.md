@@ -11,4 +11,4 @@ Video is billed. Approval comes from the user, never from you:
 3. Only after an explicit yes, run the same command again with `--confirm-cost` added. Never add the flag without that answer. A `--confirm-cost` that the user typed is the approval, and the command runs once.
 4. Never retry after a timeout or network error.
 
-A local `--from-image` is checked and encoded before the estimate; only JPEG and PNG are accepted.
+A local `--from-image` is checked and encoded before the estimate; only JPEG and PNG are accepted. With `--from-image` the estimate adds the flat $0.01 image input charge; show it to the user with the rest.

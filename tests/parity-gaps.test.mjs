@@ -361,7 +361,7 @@ test("17. setup exits 2 when xAI answers the catalog with 'Incorrect API key pro
     const run = harness();
     run.deps.api.requestAuthenticated = async () => { throw Object.assign(new Error(message), { error_class: "usage" }); };
     assert.equal(await main(["setup"], run.deps), code, message);
-    if (code === 2) assert.equal(last(run).error_class, "auth");
+    if (code === 2) assert.equal(last(run).catalogSources.language.error_class, "auth");
     if (code === 2) assert.match(last(run).message, /^xAI rejected the API key \(catalog request returned 400, 401 or 403\)$/, "(review fix)");
   }
 });

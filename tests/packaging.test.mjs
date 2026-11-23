@@ -31,7 +31,7 @@ test("the developer probe is removed and nothing refers to it (spec 006 R18)", (
   }
 });
 
-test("speak and transcribe slash commands exist and the version is 0.1.6", () => {
+test("speak and transcribe slash commands exist and the version is 0.1.7", () => {
   for (const file of ["commands/speak.md", "commands/transcribe.md"]) assert.ok(fs.existsSync(file), file);
-  assert.equal(JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8")).version, "0.1.6");
+  assert.equal(JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8")).version, "0.1.7");
 });

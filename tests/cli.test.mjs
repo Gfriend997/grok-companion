@@ -87,7 +87,7 @@ test("an unknown id refetches a cached catalog once; a failed refetch sends it u
   assert.equal(warm.catalogCalls.length, 0, "warm cache makes no catalog request");
   const reject = harness({}, { catalog: "fixture", home });
   assert.equal(await main(["ask", "x", "--model", "grok-brand-new"], reject.deps), 8);
-  assert.equal(reject.catalogCalls.length, 3);
+  assert.deepEqual(reject.catalogCalls, ["/language-models"]);
   assert.equal(reject.calls.length, 0);
   const offline = harness({}, { catalog: "fail", home });
   assert.equal(await main(["ask", "x", "--model", "grok-brand-new"], offline.deps), 0);
@@ -190,7 +190,8 @@ test("setup exits with the auth code when xAI rejects the key", async () => {
   const run = harness();
   run.deps.api.requestAuthenticated = async () => { throw Object.assign(new Error("denied"), { error_class: "auth" }); };
   assert.equal(await main(["setup"], run.deps), 2);
-  assert.equal(last(run).error_class, "auth");
+  assert.deepEqual(last(run).catalogSources.language, { source: "fallback", error_class: "auth" });
+  assert.equal(last(run).message, "xAI rejected the API key (catalog request returned 400, 401 or 403)");
 });
 
 test("citation fields cannot inject lines outside the untrusted envelope", async () => {

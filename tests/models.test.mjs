@@ -190,16 +190,25 @@ test("expired cache refetches; failure uses stale cache up to 7 days, then nothi
   assert.equal(gone.kinds.video.available, false);
 });
 
-test("loadCatalog without a key or request function never touches the network and tolerates a bad cache", async () => {
-  const home = tempHome();
+test("loadCatalog without a key never touches the network", async () => {
   const none = requester();
-  const keyless = await loadCatalog({ request: none.request, env: {}, home });
+  const keyless = await loadCatalog({ request: none.request, env: {}, home: tempHome() });
   assert.equal(none.calls.length, 0);
   assert.equal(keyless.kinds.language.available, false);
+});
+
+test("loadCatalog without a request function fails discovery and leaves the cache file untouched", async () => {
+  const home = tempHome();
   fs.mkdirSync(path.join(home, ".grok-companion"), { recursive: true });
   fs.writeFileSync(path.join(home, ".grok-companion", "models.json"), "{not json");
   const missing = await loadCatalog({ env, home });
   assert.equal(missing.kinds.language.available, false);
+  assert.equal(fs.readFileSync(path.join(home, ".grok-companion", "models.json"), "utf8"), "{not json");
+});
+
+test("invalid cached ids are ignored", async () => {
+  const home = tempHome();
+  await loadCatalog({ request: requester().request, env, home });
   const tampered = JSON.parse(fs.readFileSync(path.join(home, ".grok-companion", "models.json"), "utf8"));
   tampered.failedAt = {};
   tampered.kinds.language = { fetchedAt: Date.now(), entries: [{ id: "../../evil", kind: "language", aliases: [] }] };
@@ -209,11 +218,15 @@ test("loadCatalog without a key or request function never touches the network an
   assert.equal(result.kinds.language.source, "live", "invalid cached ids are ignored");
 });
 
-test("a cache write failure does not block loading", async () => {
+test("a cache write failure does not block loading, and leaves no temp file", async () => {
   const home = tempHome();
   fs.writeFileSync(path.join(home, ".grok-companion"), "a file where the cache folder should be");
   const result = await loadCatalog({ request: requester().request, env, home });
   assert.equal(result.kinds.language.source, "live");
+  const blocked = tempHome();
+  fs.mkdirSync(path.join(blocked, ".grok-companion", "models.json"), { recursive: true });
+  await loadCatalog({ request: requester().request, env, home: blocked });
+  assert.deepEqual(fs.readdirSync(path.join(blocked, ".grok-companion")).filter((name) => name.endsWith(".tmp")), []);
 });
 
 test("an empty or malformed 200 catalog is a discovery failure and never replaces a usable cache", async () => {
