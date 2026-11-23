@@ -7,7 +7,16 @@ const KEY_PATTERNS = [
   /\bAKIA[0-9A-Z]{16}\b/g,
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/g
 ];
-const CREDENTIAL_PATH = /(^|[\\/])?\.env[^\\/]*$|id_rsa|\.pem$|credentials/i;
+// Credential file names, shared with the risk rule (which tests the file name only; spec 007 R6, R7).
+// `.env` and `.envrc` count only as a whole dot-separated part: `.env.local` and `x.env` match, `.env-prod` does not (D1).
+export const CREDENTIAL_FILE_NAMES = Object.freeze([
+  /\.env(rc)?(\.[^\\/]*)?$/i,
+  /id_(rsa|dsa|ecdsa|ed25519)/i,
+  /\.(pem|key|pfx|p12|ppk|jks|keystore)$/i,
+  /(^|[\\/])(\.npmrc|\.netrc|_netrc|\.pypirc)$/i
+]);
+// On a whole path, `id_*` and `credentials` also match a folder name.
+const CREDENTIAL_PATH = new RegExp([...CREDENTIAL_FILE_NAMES.map((pattern) => pattern.source), "credentials"].join("|"), "i");
 
 export function scrubText(value) {
   if (typeof value !== "string") return { text: value, maskedMatches: 0 };

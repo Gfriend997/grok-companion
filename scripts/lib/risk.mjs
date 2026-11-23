@@ -1,3 +1,5 @@
+import { CREDENTIAL_FILE_NAMES } from "./scrub.mjs";
+
 // R10a: the stop-review gate reviews a diff only when it is large or touches a risky category.
 // The categories are those of the Gemini routing policy's review line. Not configurable.
 export const LARGE_DIFF_LINES = 400;
@@ -5,7 +7,7 @@ export const LARGE_DIFF_LINES = 400;
 const CATEGORIES = [
   ["auth", ["auth", "login", "signin", "oauth", "sso", "session", "jwt", "password", "passwd", "permission", "rbac", "acl"], [],
     /password|passwd|authenticat|authoriz|\bjwt\b|oauth|bcrypt|argon2|set-cookie/i],
-  ["secrets", ["secret", "credential", "token", "apikey", "keystore", "vault"], [/^\.env/i, /\.pem$/i, /\.key$/i, /\.pfx$/i, /api[_-]?key/i, /private[_-]?key/i],
+  ["secrets", ["secret", "credential", "token", "apikey", "keystore", "vault"], [...CREDENTIAL_FILE_NAMES, /api[_-]?key/i, /private[_-]?key/i],
     /secret|api[\s_-]?key|private[\s_-]?key|access[\s_-]?token|credential/i],
   ["data", ["database", "db", "storage", "backup", "delete", "purge"], [],
     /\bdrop\s+(table|database|column|schema)\b|\btruncate\b|\bdelete\s+from\b|rm\s+-rf|rmSync|unlink|Remove-Item|deleteMany|destroy_all/i],
@@ -50,7 +52,9 @@ export function riskyDiff(diffText) {
     else if (inHunk && /^[+-]/.test(line)) changed.push(line.slice(1));
     else if (/^(---|\+\+\+) /.test(line)) {
       gitPaths = [];
-      if (line.slice(4) !== "/dev/null") paths.push(stripPrefix(line.slice(4)));
+      // Git ends a header path that holds a space with a tab (review fix).
+      const header = line.slice(4).trimEnd();
+      if (header !== "/dev/null") paths.push(stripPrefix(header));
     }
   }
   paths.push(...gitPaths);

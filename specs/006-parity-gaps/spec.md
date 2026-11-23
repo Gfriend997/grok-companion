@@ -500,6 +500,8 @@ codex-plugin can do these and claude-source still cannot:
 
 Until the T11 live check runs, `--from-image` is at parity in code only: neither plugin has proved the request live.
 
+Note (2026-11-22, spec 007): item 3 is closed by spec 007 (R1 to R5). Item 4 is decided against by spec 007 D7 (cancel signal) and D8 (error-body cap and raced body reads).
+
 claude-source can do these and codex-plugin cannot:
 
 1. Slash commands, the SessionStart routing policy, and the per-repository stop-review gate with its risky-diff rule.

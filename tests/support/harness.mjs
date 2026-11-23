@@ -15,7 +15,7 @@ const homes = [];
 test.after(() => { for (const dir of homes) fs.rmSync(dir, { recursive: true, force: true }); });
 export function newHome() { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-cli-")); homes.push(dir); return dir; }
 
-// catalog: undefined = no requestAuthenticated (discovery fails -> fallback routes); "fixture" = live 2026-11-21 catalog; "fail" = catalog requests throw.
+// catalog: undefined = no requestAuthenticated (discovery fails -> fallback routes); "fixture" = live 2026-11-21 catalog; "fail" = catalog requests throw; { fail: [kinds], error_class } = only those kinds throw, with that class (default network).
 // models: the GET /models body served alongside the catalog, or "fail".
 // repo: what repoRoot returns; commandLine: what the process query returns for any pid.
 export function harness(overrides = {}, { catalog, home = newHome(), env = {}, models = modelsFixture, repo = null, commandLine = "" } = {}) {
@@ -28,13 +28,14 @@ export function harness(overrides = {}, { catalog, home = newHome(), env = {}, m
   const kills = [];
   const submissions = [];
   const jobUpdates = [];
+  const sweeps = [];
   const api = {
     chat: async (request) => { calls.push(request); return { content: "answer", usage: { total_tokens: 3 } }; },
     respond: async (request) => { calls.push(request); return { content: "fresh", citations: [{ url: "https://example.test", title: "Example" }], usage: { num_sources_used: 1 } }; }
   };
   if (catalog) api.requestAuthenticated = async (p) => {
     catalogCalls.push(p);
-    if (catalog === "fail" || (p === "/models" && models === "fail")) throw Object.assign(new Error("down"), { error_class: "network" });
+    if (catalog === "fail" || (p === "/models" && models === "fail") || catalog.fail?.includes(pathKind[p])) throw Object.assign(new Error("down"), { error_class: catalog.error_class ?? "network" });
     return p === "/models" ? models : fixture[pathKind[p]];
   };
   const deps = {
@@ -54,7 +55,7 @@ export function harness(overrides = {}, { catalog, home = newHome(), env = {}, m
       transcribeAudio: async (request) => { calls.push(request); return { text: "Hello", untrusted: true }; }
     },
     jobs: {
-      createJob: (job) => { jobsCreated.push(job); return "local-1"; }, recordSubmission: (...args) => { submissions.push(args); }, pollWithBackoff: async (poll) => poll(), refresh: async () => ({ state: "done" }), listJobs: () => [], getJob: () => ({ id: "local-1", state: "done" }), cancelJob: async () => ({ id: "local-1", state: "abandoned" }), updateJob: (id, patch, options) => { jobUpdates.push([id, patch, options]); return { id, ...patch }; }
+      createJob: (job) => { jobsCreated.push(job); return "local-1"; }, recordSubmission: (...args) => { submissions.push(args); }, pollWithBackoff: async (poll) => poll(), refresh: async () => ({ state: "done" }), listJobs: () => [], getJob: () => ({ id: "local-1", state: "done" }), cancelJob: async () => ({ id: "local-1", state: "abandoned" }), updateJob: (id, patch, options) => { jobUpdates.push([id, patch, options]); return { id, ...patch }; }, sweep: () => { sweeps.push(true); return { jobs: 0, claims: 0, answers: 0, locks: 0, temp: 0 }; }
     },
     spawnWorker: (id) => { workers.push(id); return 4242; },
     repoRoot: () => repo,
@@ -63,5 +64,5 @@ export function harness(overrides = {}, { catalog, home = newHome(), env = {}, m
     sleep: async () => {},
     ...overrides
   };
-  return { deps, lines, calls, catalogCalls, jobsCreated, home, workers, queries, kills, submissions, jobUpdates };
+  return { deps, lines, calls, catalogCalls, jobsCreated, home, workers, queries, kills, submissions, jobUpdates, sweeps };
 }

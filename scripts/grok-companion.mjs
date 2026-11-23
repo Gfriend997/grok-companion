@@ -6,7 +6,7 @@ import * as scrubRuntime from "./lib/scrub.mjs";
 import * as attachRuntime from "./lib/attach.mjs";
 import * as modelsRuntime from "./lib/models.mjs";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { readFileSync, existsSync, realpathSync, statSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, statSync, mkdirSync, writeFileSync, renameSync, rmSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import { join, dirname, resolve, win32 } from "node:path";
@@ -44,8 +44,13 @@ export function writeConfig(home, config) {
   const file = configFile(home);
   mkdirSync(dirname(file), { recursive: true });
   const temporary = `${file}.${randomUUID()}.tmp`;
-  writeFileSync(temporary, JSON.stringify(config, null, 2), { encoding: "utf8", mode: 0o600 });
-  renameSync(temporary, file);
+  try {
+    writeFileSync(temporary, JSON.stringify(config, null, 2), { encoding: "utf8", mode: 0o600 });
+    renameSync(temporary, file);
+  } catch (error) {
+    try { rmSync(temporary, { force: true }); } catch { /* ignore */ }
+    throw error;
+  }
 }
 
 function setGate(value, deps) {
@@ -134,12 +139,21 @@ export function roleFor(command, flags = {}) {
   return "fast";
 }
 
-// Catalog loader memoized for one invocation; `refetch`/`fresh` force a new load.
+// Catalog loader memoized for one invocation; `fresh` forces a new load.
+// `refetch: kind` reloads only that kind, at most once per invocation; other kinds keep their loaded state.
 function catalogContext(deps) {
   let cached;
-  return async (options = {}) => {
-    if (cached && !options.refetch && !options.fresh) return cached;
-    cached = await deps.models.loadCatalog({ request: deps.api.requestAuthenticated, env: deps.env, home: deps.home, ...options });
+  let refetched = false;
+  const load = (options) => deps.models.loadCatalog({ request: deps.api.requestAuthenticated, env: deps.env, home: deps.home, ...options });
+  return async ({ fresh = false, refetch } = {}) => {
+    if (refetch && cached && !refetched) {
+      refetched = true;
+      const reloaded = await load({ refetch: true, only: [refetch] });
+      cached = { kinds: { ...cached.kinds, [refetch]: reloaded.kinds[refetch] } };
+      return cached;
+    }
+    if (cached && !fresh) return cached;
+    cached = await load({ fresh });
     return cached;
   };
 }
@@ -153,7 +167,7 @@ export async function selectModel(role, flags, ctx, { needsImageInput = false } 
 
 async function selectRoute(role, flags, ctx, needsImageInput) {
   const { models } = ctx;
-  const explicit = flags.model ?? ctx.env?.[ROLE_ENV[role]];
+  const explicit = flags.model ?? ctx.env?.[ROLE_ENV[role]]?.trim();
   if (!explicit) {
     const resolved = models.resolveRole(role, await ctx.catalog(), { needsImageInput });
     if (!resolved.defer) return resolved;
@@ -163,11 +177,13 @@ async function selectRoute(role, flags, ctx, needsImageInput) {
   const kind = models.ROLE_KIND[role];
   let catalog = await ctx.catalog();
   let found = models.findModel(explicit, kind, catalog);
-  if (found.error === "unknown" && catalog.kinds[kind].source !== "live") {
-    catalog = await ctx.catalog({ refetch: true });
+  // Refetch only a kind served from the fresh cache: a live load is current, and a stale one means its fetch failed.
+  if (found.error === "unknown" && catalog.kinds[kind].source === "cache") {
+    catalog = await ctx.catalog({ refetch: kind });
     found = models.findModel(explicit, kind, catalog);
-    if (catalog.kinds[kind].source !== "live") found = { unverified: true };
   }
+  // Only a live list proves an id is absent.
+  if (found.error === "unknown" && catalog.kinds[kind].source !== "live") found = { unverified: true };
   if (found.unverified) return { model: explicit, routeSource, modelVerified: false, priceChanged: null };
   if (found.error === "wrong_kind") throw runtimeError("usage", `${explicit} is not a ${kind} model`);
   if (found.error === "unknown") throw runtimeError("capability_unavailable", `${explicit} is not in this account's xAI model catalog`);
@@ -352,6 +368,10 @@ async function cancelCommand(id, deps) {
   return { ...updated, note };
 }
 
+// IMAGE INPUT CHARGE (spec 007 R9, D6): the one place the image-to-video charge enters the estimate.
+// Measured 2026-11-22: flat $0.01 per job (1 s job 900M ticks, 2 s job 1,700M ticks).
+const IMAGE_INPUT_USD = 0.01;
+
 async function commandVideo(flags, prompt, deps) {
   if (!flags.seconds) throw runtimeError("usage", "video requires --seconds");
   const seconds = Number(flags.seconds);
@@ -366,10 +386,12 @@ async function commandVideo(flags, prompt, deps) {
     if (parts.length !== 1 || parts[0].type !== "image_url") throw runtimeError("usage", "--from-image requires a JPEG or PNG image");
     fromImage = parts[0].image_url.url;
   }
-  const total = (seconds * 0.08).toFixed(2);
-  if (!flags["confirm-cost"]) throw runtimeError("usage", `video requires --confirm-cost after user approval. Estimate: ${seconds} × $0.08 = $${total} (starting rate, unverified; the price varies by model and resolution). Nothing was sent.`);
+  const estimate = fromImage
+    ? `${seconds} × $0.08 + $${IMAGE_INPUT_USD.toFixed(2)} image input = $${(seconds * 0.08 + IMAGE_INPUT_USD).toFixed(2)}`
+    : `${seconds} × $0.08 = $${(seconds * 0.08).toFixed(2)}`;
+  if (!flags["confirm-cost"]) throw runtimeError("usage", `video requires --confirm-cost after user approval. Estimate: ${estimate} (starting rate, unverified; the price varies by model and resolution). Nothing was sent.`);
   const route = routeMeta(await selectModel("video", flags, deps.ctx, { needsImageInput: Boolean(fromImage) }));
-  write(deps, `${seconds} × $0.08 = $${total} (unverified estimate; actual price depends on model ${route.model})`);
+  write(deps, `${estimate} (unverified estimate; actual price depends on model ${route.model})`);
   const id = deps.jobs.createJob({ kind: "video", request: { prompt, seconds, ...route } });
   let created;
   try {
@@ -516,6 +538,12 @@ export async function main(argv, suppliedDeps = {}) {
       if (!prompt) throw runtimeError("usage", "video requires a prompt");
       await commandVideo(flags, prompt, deps);
     } else if (command === "status") {
+      // Listing jobs prunes finished records older than 7 days and leftover side files (spec 007 R8); a failed sweep prints nothing.
+      if (!flags.id) {
+        let pruned;
+        try { pruned = deps.jobs.sweep(); } catch { /* list as before */ }
+        if (pruned && Object.values(pruned).some((count) => count > 0)) write(deps, { pruned });
+      }
       write(deps, flags.id ? await refreshJob(deps, flags.id) : deps.jobs.listJobs().map(staleText(deps)));
     } else if (command === "result") {
       if (!flags.id) throw runtimeError("usage", "result requires --id");
@@ -546,14 +574,17 @@ export async function main(argv, suppliedDeps = {}) {
       }
       const catalog = await deps.ctx.catalog({ fresh: true });
       const kinds = Object.values(catalog.kinds);
-      if (kinds.some((state) => state.error === "auth")) throw runtimeError("auth", "xAI rejected the API key (catalog request returned 400, 401 or 403)");
       const models = kinds.flatMap((state) => state.entries.map(({ id, kind, aliases, inputModalities, outputModalities, prices }) => ({ id, kind, aliases, inputModalities, outputModalities, prices })));
       const routes = {};
       for (const role of Object.keys(deps.models.ROLE_KIND)) {
         try { routes[role] = routeMeta(await selectModel(role, {}, deps.ctx)); } catch (error) { routes[role] = { error_class: error.error_class ?? "usage", message: String(error.message) }; }
       }
-      const catalogSources = Object.fromEntries(Object.entries(catalog.kinds).map(([kind, state]) => [kind, state.source]));
-      write(deps, { keyPresent, apiReachable: kinds.every((state) => state.source === "live"), catalogSources, models, routes, ...gate, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
+      const catalogSources = Object.fromEntries(Object.entries(catalog.kinds).map(([kind, state]) => [kind,
+        state.source === "live" ? { source: "live" } : { source: state.source === "cache-stale" ? "cache-stale" : "fallback", error_class: state.error ?? "network" }]));
+      // Exit 2 only when xAI rejected the key for every catalog; a partial failure is reported per kind.
+      const rejected = kinds.every((state) => state.error === "auth");
+      write(deps, { keyPresent, apiReachable: kinds.every((state) => state.source === "live"), catalogSources, models, routes, ...gate, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation.", ...(rejected ? { message: "xAI rejected the API key (catalog request returned 400, 401 or 403)" } : {}) });
+      return rejected ? EXIT_CODES.auth : 0;
     } else throw runtimeError("usage", `unknown command: ${command}`);
     return 0;
   } catch (error) {
