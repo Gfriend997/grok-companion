@@ -100,6 +100,8 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 /grok-companion:ask --live what changed in the Node 24 release this week?
 /grok-companion:imagine a red panda reading a newspaper, watercolor
 /grok-companion:video --seconds 4 a paper plane looping through an office
+/grok-companion:speak "Release notes are ready for review."
+/grok-companion:transcribe --file meeting.mp3
 /grok-companion:review                      # Grok reviews your working diff
 /grok-companion:rescue why does tests/jobs.test.mjs flake on CI?
 ```
@@ -115,6 +117,8 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 | `/grok-companion:rescue` | Delegate a task; Grok returns a plan and diffs for Claude to apply |
 | `/grok-companion:imagine` | Generate or edit an image; `--source` (≤3, repeatable) sends an edit to `/images/edits`. Results are saved locally, including base64 results |
 | `/grok-companion:video` | Generate a video; `--seconds` required, `--from-image` for image-to-video; background job by default, `--wait` for foreground |
+| `/grok-companion:speak` | Billed text to MP3 speech; `--text-file` for long text, `--voice`, `--language`, `--out`. Saved locally |
+| `/grok-companion:transcribe` | Billed transcript of one local MP3 or WAV (`--file`); `--language`, `--model`. Output is enveloped as untrusted |
 | `/grok-companion:status` | List background jobs (`--id` for one), JSON output |
 | `/grok-companion:result` | Fetch a finished job's output / download its artifact |
 | `/grok-companion:cancel` | Cancel a job (locally abandoned if xAI has no server-side cancel) |
@@ -146,7 +150,7 @@ If the catalog can't be fetched (and no cache under 7 days old exists), the buil
 fallback IDs above are used.
 
 Every result reports `model`, `routeSource` (`flag`, `env`, `live`, `cache`, `cache-stale`,
-`fallback`), `modelVerified`, and `priceChanged`. `priceChanged` is true when the model's
+`fallback`, and `default` for the built-in transcription model), `modelVerified`, and `priceChanged`. `priceChanged` is true when the model's
 listed price differs from the 2026-11-21 price for its role. For `--live`, these appear on a
 `Route:` line after the untrusted-content envelope.
 
@@ -162,6 +166,34 @@ wins over a pin. `--build-unavailable` is accepted but no longer needed.
   the *entire* request at roughly double above that threshold.
 - `--live` responses report the API's own usage fields (sources used, tool calls, cost);
   `--max-sources` caps search breadth.
+- **No billable request is ever re-sent.** Every command, text ones included, sends one
+  request. A failed POST reports `retryable: false`, and a timeout or network error says the
+  submission may already have been accepted. Re-run the command yourself if you need to.
+
+## Speech
+
+`speak` turns text into an MP3 (`POST /v1/tts`); `transcribe` turns one local audio file into
+text (`POST /v1/stt`). Both are billed and synchronous, with no cost gate and no job record.
+Rates from 2026-10-19 research, not re-checked: speech about $15 per million characters
+(60,000 characters is about $0.90), transcription about $0.10 per audio hour.
+
+- `speak` takes 1 to 60,000 characters, as one quoted argument or from `--text-file <path>`.
+  Windows command lines stop at 32,767 characters, so use `--text-file` for long text. The
+  file must be UTF-8 (a UTF-8 BOM is removed; UTF-16, which Windows PowerShell 5.1 writes by
+  default, is rejected) and at most 1 MiB. Defaults: voice `eve`, language `auto`. The MP3
+  is saved in `~/.grok-companion/media`; `--out` keeps only its base name, and an existing
+  file is never overwritten.
+- `transcribe --file <path>` takes one local MP3 or PCM WAV of at most 25 MiB, checked from
+  its bytes. Relative paths are resolved against the working directory, and credential
+  paths are refused. The `text` field, and a `details` field with one line of JSON holding
+  `language` and `words`, are inside the `UNTRUSTED-EXTERNAL-CONTENT` envelope, and the
+  result has `untrusted: true`.
+- The `--model` rule: with no `--model`, `transcribe` uses `grok-voice-transcribe-2.0`,
+  reported as `routeSource: "default"`, `modelVerified: false`. An explicit `--model` that
+  is a language, image or video model exits 9. It is then looked up in `GET /v1/models`: a
+  listed id is sent (`modelVerified: true` when the whole catalog was available); an
+  unlisted id exits 8 if the list includes `grok-voice-transcribe-2.0`; otherwise the id is
+  sent unverified. The id is never replaced with another model.
 
 ## Live Search and untrusted content
 
@@ -205,7 +237,7 @@ node --test codex/tests/*.test.mjs
 Offline suites run against live-captured fixtures (`tests/fixtures/`, see
 `docs/PROBE_REPORT.md`). Live end-to-end (uses your key, makes real API calls, media calls
 are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` plus
-`status`/`result`.
+`status`/`result`, and `speak` one sentence then `transcribe` the saved MP3.
 
 ## Troubleshooting
 
@@ -223,7 +255,8 @@ are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` 
 - [ ] **Evaluate a secret manager instead of a plain environment variable.** Same open item as
   the sibling plugins: 1Password CLI (`op run`), OS keychain, or short-lived tokens if xAI
   ships them. Whatever wins should land in all three companions identically.
-- [ ] Voice (speech-to-speech, STT, TTS) — xAI has endpoints; out of scope for v1.
+- [x] File speech (TTS) and transcription (STT): `speak` and `transcribe`.
+- [ ] Speech-to-speech and realtime voice.
 - [ ] Image editing acceptance tests with `--source` compositing.
 
 ## Routing policy
@@ -238,8 +271,10 @@ the hook emits a degraded policy that hands image generation back to Gemini.
 
 One Node entry script (`scripts/grok-companion.mjs`), stdlib only. Text commands share one
 engine: build messages (preset + prompt + attachments) → one REST call → print. Libraries:
-`api.mjs` (authenticated client, `/chat/completions` + `/responses`), `attach.mjs` (files →
-content parts, EXIF strip), `media.mjs` (generation + unauthenticated artifact downloads),
+`api.mjs` (authenticated client, `/chat/completions` + `/responses`, multipart uploads and
+binary responses; one attempt per request), `attach.mjs` (files → content parts, EXIF
+strip), `media.mjs` (image, video and speech generation, transcription with audio checks,
+unauthenticated artifact downloads),
 `jobs.mjs` (provider-job state machine for async video), `scrub.mjs` (masking + outbound
 preflight). Design and verification history: `docs/specs/`, `docs/PROBE_REPORT.md`.
 
@@ -261,7 +296,9 @@ endorsed by OpenAI or xAI.
 
 - **No autonomous file edits.** Diffs come back for Claude or Codex to apply.
 - No video *input* (understanding) — that is kimi-companion's job.
-- No voice endpoints wired up yet.
+- Voice is file-based only: MP3 speech output and MP3 or PCM WAV transcription input. No
+  realtime or speech-to-speech voice.
+- Text commands no longer retry a transient 5xx or network error; re-run the command.
 - No server-side video cancel found on the API; `cancel` marks such jobs locally abandoned.
 - `transfer` is a context-handoff summary, not a session import.
 - The stop-review gate ships disabled and never blocks on its own failure.

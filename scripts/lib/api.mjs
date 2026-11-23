@@ -41,10 +41,14 @@ function parseResponse(body) {
   return { content, citations, usage: body.usage ?? null, raw: body };
 }
 
-export function createApiClient({ fetchImpl = globalThis.fetch, env = process.env, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)) } = {}) {
-  async function requestAuthenticated(path, { method = "GET", body, signal, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, redirect = "error", maxBytes } = {}) {
+export function createApiClient({ fetchImpl = globalThis.fetch, env = process.env } = {}) {
+  async function requestAuthenticated(path, { method = "GET", body, formData, responseType = "json", signal, timeoutMs = DEFAULT_CHAT_TIMEOUT_MS, redirect = "error", maxBytes } = {}) {
     if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//")) {
       throw runtimeError({ error_class: "usage", message: "path must start with a single slash", retryable: false });
+    }
+    if ((body !== undefined && formData !== undefined) || (formData !== undefined && !(formData instanceof FormData))
+      || !["json", "bytes"].includes(responseType) || (responseType === "bytes" && maxBytes === undefined)) {
+      throw runtimeError({ error_class: "usage", message: "invalid API body, formData, responseType or maxBytes options", retryable: false });
     }
     const key = env.XAI_API_KEY;
     if (!key) throw runtimeError({ error_class: "auth", message: "XAI_API_KEY is not set", retryable: false });
@@ -52,23 +56,26 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const abort = () => controller.abort();
     signal?.addEventListener("abort", abort, { once: true });
+    // A billable submission may have reached xAI: a failed non-GET is never marked safe to resend.
+    const note = method === "GET" ? "" : "; submission may already have been accepted";
     try {
       let response;
       try {
         response = await fetchImpl(`${API_BASE}${path}`, {
           method,
+          // No Content-Type for formData: fetch writes the multipart boundary.
           headers: { Authorization: `Bearer ${key}`, ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
-          body: body === undefined ? undefined : JSON.stringify(body),
+          body: formData ?? (body === undefined ? undefined : JSON.stringify(body)),
           signal: controller.signal,
           // The bearer key must never be re-sent to a redirect target.
           redirect
         });
       } catch (cause) {
-        throw runtimeError({ error_class: "network", message: cause?.name === "AbortError" ? "API request timed out" : "API network request failed", retryable: true });
+        throw runtimeError({ error_class: "network", message: `${cause?.name === "AbortError" ? "API request timed out" : "API network request failed"}${note}`, retryable: method === "GET" });
       }
-      const tooLarge = () => runtimeError({ error_class: "network", message: "API response is too large", retryable: false });
+      const tooLarge = () => runtimeError({ error_class: "network", message: `API response is too large${note}`, retryable: false });
       if (maxBytes !== undefined && Number(response.headers?.get?.("content-length")) > maxBytes) throw tooLarge();
-      let raw;
+      let bytes;
       if (maxBytes !== undefined && response.body?.getReader) {
         // Count decoded bytes while streaming so an oversized body is cancelled, not buffered.
         const reader = response.body.getReader();
@@ -76,22 +83,30 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
         let total = 0;
         for (;;) {
           let step;
-          try { step = await reader.read(); } catch { throw runtimeError({ error_class: "network", message: "API response read failed", retryable: false }); }
+          try { step = await reader.read(); } catch { throw runtimeError({ error_class: "network", message: `API response read failed${note}`, retryable: false }); }
           const { done, value } = step;
           if (done) break;
           total += value.byteLength;
           if (total > maxBytes) { await reader.cancel().catch(() => {}); throw tooLarge(); }
           chunks.push(value);
         }
-        raw = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk))).toString("utf8");
+        bytes = Buffer.concat(chunks.map((chunk) => Buffer.from(chunk)));
       } else {
-        raw = await response.text();
-        if (maxBytes !== undefined && Buffer.byteLength(raw) > maxBytes) throw tooLarge();
+        let text;
+        try { text = await response.text(); } catch { throw runtimeError({ error_class: "network", message: `API response read failed${note}`, retryable: false }); }
+        bytes = Buffer.from(text, "utf8");
+        if (maxBytes !== undefined && bytes.length > maxBytes) throw tooLarge();
       }
+      if (response.ok && responseType === "bytes") return bytes;
+      const raw = bytes.toString("utf8");
       let parsed = {};
       // A delivered response with a garbage body may already be billed — never auto-retry it.
       try { parsed = raw ? JSON.parse(raw) : {}; } catch { throw runtimeError({ error_class: "network", message: "API returned non-JSON response", retryable: false }); }
-      if (!response.ok) throw runtimeError(classifyError(response.status, parsed));
+      if (!response.ok) {
+        const detail = classifyError(response.status, parsed);
+        if (method !== "GET") detail.retryable = false;
+        throw runtimeError(detail);
+      }
       return parsed;
     } finally {
       clearTimeout(timer);
@@ -100,15 +115,8 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
   }
 
   async function chat({ model, messages, maxTokens, signal }) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      try {
-        const body = await requestAuthenticated("/chat/completions", { method: "POST", signal, body: { model, messages, ...(maxTokens ? { max_tokens: maxTokens } : {}) } });
-        return parseContent(body);
-      } catch (error) {
-        if (attempt === 2 || error.error_class !== "network") throw error;
-        await sleep(100 * (attempt + 1));
-      }
-    }
+    const body = await requestAuthenticated("/chat/completions", { method: "POST", signal, body: { model, messages, ...(maxTokens ? { max_tokens: maxTokens } : {}) } });
+    return parseContent(body);
   }
 
   async function respond({ model, input, tools, signal }) {

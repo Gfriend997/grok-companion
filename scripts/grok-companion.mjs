@@ -6,9 +6,9 @@ import * as scrubRuntime from "./lib/scrub.mjs";
 import * as attachRuntime from "./lib/attach.mjs";
 import * as modelsRuntime from "./lib/models.mjs";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
-import { join, dirname } from "node:path";
+import { join, dirname, resolve } from "node:path";
 import { spawnSync } from "node:child_process";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "prompts");
@@ -105,6 +105,10 @@ function preflight(deps, text) {
   if (!result.ok) throw runtimeError("usage", `content rejected before dispatch: ${result.reason}`);
 }
 
+// Provider content must not be able to close the envelope early.
+const neutralize = (text) => String(text ?? "").replaceAll("[/UNTRUSTED-EXTERNAL-CONTENT]", "[\\/UNTRUSTED-EXTERNAL-CONTENT]");
+const envelope = (text) => `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(text)}\n[/UNTRUSTED-EXTERNAL-CONTENT]`;
+
 function write(deps, value) {
   const clean = deps.scrub.scrubDeep(value);
   deps.stdout.write(`${typeof clean === "string" ? clean : JSON.stringify(clean)}\n`);
@@ -134,12 +138,10 @@ async function delegation(command, flags, prompt, deps) {
       maxSources = Number(flags["max-sources"]);
       if (!Number.isInteger(maxSources) || maxSources < 1) throw runtimeError("usage", "--max-sources must be a positive integer");
     }
-    // Search content must not be able to close the envelope early.
-    const neutralize = (text) => String(text ?? "").replaceAll("[/UNTRUSTED-EXTERNAL-CONTENT]", "[\\/UNTRUSTED-EXTERNAL-CONTENT]");
     const citations = response.citations.slice(0, maxSources);
     // Citation fields print outside the envelope, so one line each: no injected `Route:` or envelope lines.
     const oneLine = (text) => neutralize(text).replace(/[\r\n\u2028\u2029]+/g, " ");
-    write(deps, `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(response.content)}\n[/UNTRUSTED-EXTERNAL-CONTENT]\nSources:\n${citations.map((item) => `- ${oneLine(item.title)}: ${oneLine(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}\nRoute: ${JSON.stringify(routeMeta(routing))}`);
+    write(deps, `${envelope(response.content)}\nSources:\n${citations.map((item) => `- ${oneLine(item.title)}: ${oneLine(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}\nRoute: ${JSON.stringify(routeMeta(routing))}`);
     return;
   }
   const message = attachment.content ? [...attachment.content, ...(prompt ? [{ type: "text", text: prompt }] : [])] : prompt;
@@ -199,6 +201,89 @@ async function commandImagine(flags, prompt, deps) {
   write(deps, { ...saved, ...route });
 }
 
+const AUDIO_FLAGS = { speak: ["voice", "language", "out", "text-file"], transcribe: ["file", "language", "model"] };
+const MAX_SPEECH_CHARS = 60_000;
+const MAX_TEXT_FILE_BYTES = 1024 * 1024;
+
+// parse accepts any flag name, so audio commands allow only their own.
+function checkAudioFlags(command, flags) {
+  for (const [key, value] of Object.entries(flags)) {
+    if (Array.isArray(value) && !value.length) continue;
+    if (!AUDIO_FLAGS[command].includes(key)) throw runtimeError("usage", `${command} does not support --${key}`);
+  }
+}
+
+function checkSourcePath(deps, file) {
+  const result = deps.scrub.preflight("", { sourcePath: file });
+  if (!result.ok) throw runtimeError("usage", `content rejected before dispatch: ${result.reason}`);
+}
+
+// UTF-8 only: attach's decodeText would accept UTF-16, which this file must reject.
+function readSpeechFile(deps, file) {
+  const resolved = resolve(file);
+  checkSourcePath(deps, file);
+  checkSourcePath(deps, resolved);
+  let real;
+  try { real = realpathSync.native(resolved); } catch { throw runtimeError("usage", "text file not found"); }
+  checkSourcePath(deps, real);
+  const stat = statSync(real);
+  if (!stat.isFile()) throw runtimeError("usage", "text file must be a regular file");
+  if (stat.size > MAX_TEXT_FILE_BYTES) throw runtimeError("usage", "text file is too large (maximum 1 MiB)");
+  let bytes = readFileSync(real);
+  if (bytes.length > MAX_TEXT_FILE_BYTES) throw runtimeError("usage", "text file is too large (maximum 1 MiB)");
+  if (deps.attach.isBinaryDoc(file, bytes)) throw runtimeError("usage", "text file is a binary document");
+  const notUtf8 = () => runtimeError("usage", "text file must be UTF-8");
+  if (bytes.length >= 2 && ((bytes[0] === 0xff && bytes[1] === 0xfe) || (bytes[0] === 0xfe && bytes[1] === 0xff))) throw notUtf8();
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) bytes = bytes.subarray(3);
+  let text;
+  try { text = new TextDecoder("utf-8", { fatal: true }).decode(bytes); } catch { throw notUtf8(); }
+  // A NUL means UTF-16 or UTF-32 without a BOM.
+  if (text.includes("\0")) throw notUtf8();
+  return text;
+}
+
+async function commandSpeak(flags, prompt, deps) {
+  if (Boolean(prompt) === Boolean(flags["text-file"])) throw runtimeError("usage", "speak requires text or --text-file, not both");
+  const text = flags["text-file"] ? readSpeechFile(deps, flags["text-file"]) : prompt;
+  if (!text.trim() || [...text].length > MAX_SPEECH_CHARS) throw runtimeError("usage", "speech text must contain 1 to 60000 characters");
+  preflight(deps, text);
+  write(deps, await deps.media.synthesizeSpeech({ text, voice: flags.voice, language: flags.language, out: flags.out }));
+}
+
+// The model is chosen here, before any upload. Only unbilled GETs run; the id is never swapped.
+async function transcriptionRoute(flags, deps) {
+  const id = flags.model;
+  if (id === undefined) return { model: mediaRuntime.DEFAULT_TRANSCRIBE_MODEL, routeSource: "default", modelVerified: false, priceChanged: null };
+  if (!deps.models.ID_PATTERN.test(id)) throw runtimeError("usage", `invalid --model: ${id}`);
+  const catalog = await deps.ctx.catalog();
+  if (Object.keys(catalog.kinds).some((kind) => deps.models.findModel(id, kind, catalog).entry)) throw runtimeError("usage", `${id} is not a speech-to-text model`);
+  const allKinds = Object.values(catalog.kinds).every((state) => state.available);
+  let listed = null;
+  try {
+    const body = await deps.api.requestAuthenticated("/models", { timeoutMs: 5000, maxBytes: 1_000_000 });
+    if (Array.isArray(body?.data)) listed = new Set(body.data.flatMap((entry) => [entry?.id, ...(Array.isArray(entry?.aliases) ? entry.aliases : [])]));
+  } catch { /* Unverifiable: sent unverified, as with an unavailable catalog. */ }
+  const route = { model: id, routeSource: "flag", priceChanged: null };
+  if (listed?.has(id)) return { ...route, modelVerified: allKinds };
+  // The list covers voice models, so an absent id is known to be unavailable.
+  if (listed?.has(mediaRuntime.DEFAULT_TRANSCRIBE_MODEL)) throw runtimeError("capability_unavailable", `${id} is not listed by xAI /models`);
+  return { ...route, modelVerified: false };
+}
+
+async function commandTranscribe(flags, prompt, deps) {
+  if (prompt || flags.file.length !== 1) throw runtimeError("usage", "transcribe requires exactly one --file and no prompt");
+  const route = await transcriptionRoute(flags, deps);
+  const result = await deps.media.transcribeAudio({ file: flags.file[0], language: flags.language, model: route.model });
+  const details = { ...(result.language !== undefined ? { language: result.language } : {}), ...(result.words !== undefined ? { words: result.words } : {}) };
+  write(deps, {
+    ...routeMeta(route),
+    untrusted: true,
+    ...(result.duration !== undefined ? { duration: result.duration } : {}),
+    text: envelope(result.text),
+    ...(Object.keys(details).length ? { details: envelope(JSON.stringify(details)) } : {})
+  });
+}
+
 export async function main(argv, suppliedDeps = {}) {
   const deps = {
     api: apiRuntime, media: mediaRuntime, jobs: jobsRuntime, scrub: scrubRuntime, attach: attachRuntime, models: modelsRuntime,
@@ -215,6 +300,9 @@ export async function main(argv, suppliedDeps = {}) {
         else throw runtimeError("usage", `${command} requires a prompt or --file`);
       }
       await delegation(command, flags, effectivePrompt, deps);
+    } else if (command === "speak" || command === "transcribe") {
+      checkAudioFlags(command, flags);
+      await (command === "speak" ? commandSpeak : commandTranscribe)(flags, prompt, deps);
     } else if (command === "imagine") {
       if (!prompt) throw runtimeError("usage", "imagine requires a prompt");
       await commandImagine(flags, prompt, deps);

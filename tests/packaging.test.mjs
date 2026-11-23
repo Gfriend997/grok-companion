@@ -26,3 +26,8 @@ test("stop-review gate is disabled by default", () => {
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "");
 });
+
+test("speak and transcribe slash commands exist and the version is 0.1.4", () => {
+  for (const file of ["commands/speak.md", "commands/transcribe.md"]) assert.ok(fs.existsSync(file), file);
+  assert.equal(JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8")).version, "0.1.4");
+});
