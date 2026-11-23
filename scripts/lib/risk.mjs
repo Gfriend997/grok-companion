@@ -5,8 +5,8 @@ export const LARGE_DIFF_LINES = 400;
 const CATEGORIES = [
   ["auth", ["auth", "login", "signin", "oauth", "sso", "session", "jwt", "password", "passwd", "permission", "rbac", "acl"], [],
     /password|passwd|authenticat|authoriz|\bjwt\b|oauth|bcrypt|argon2|set-cookie/i],
-  ["secrets", ["secret", "credential", "token", "apikey", "keystore", "vault"], [/^\.env/i, /\.pem$/i, /\.key$/i, /\.pfx$/i],
-    /secret|api[_-]?key|private[_-]?key|access[_-]?token|credential/i],
+  ["secrets", ["secret", "credential", "token", "apikey", "keystore", "vault"], [/^\.env/i, /\.pem$/i, /\.key$/i, /\.pfx$/i, /api[_-]?key/i, /private[_-]?key/i],
+    /secret|api[\s_-]?key|private[\s_-]?key|access[\s_-]?token|credential/i],
   ["data", ["database", "db", "storage", "backup", "delete", "purge"], [],
     /\bdrop\s+(table|database|column|schema)\b|\btruncate\b|\bdelete\s+from\b|rm\s+-rf|rmSync|unlink|Remove-Item|deleteMany|destroy_all/i],
   ["money", ["payment", "billing", "invoice", "checkout", "stripe", "paypal", "pricing", "refund", "subscription", "ledger", "payout"], [],

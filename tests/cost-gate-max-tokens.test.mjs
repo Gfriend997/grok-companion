@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createMedia } from "../scripts/lib/media.mjs";
-import { harness } from "./cli.test.mjs";
+import { harness } from "./support/harness.mjs";
 
 const last = (run) => JSON.parse(run.lines.at(-1));
 const TEXT = ["ask", "review", "adversarial-review", "rescue", "transfer"];

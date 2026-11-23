@@ -94,11 +94,18 @@ export function estimateTokens(parts) {
 export function toParts(paths, { maxFileBytes = MAX_FILE_BYTES, maxTotalBytes = MAX_TOTAL_BYTES } = {}) {
   if (!Array.isArray(paths)) throw usage("paths must be an array");
   let totalBytes = 0;
+  const checkPath = (sourcePath) => {
+    const approval = preflight("", { sourcePath });
+    if (!approval.ok) throw usage(`attachment rejected: ${approval.reason}`);
+  };
   const parts = paths.map((inputPath) => {
+    checkPath(inputPath);
     const resolved = path.resolve(inputPath);
     let stat;
     try { stat = fs.statSync(resolved); } catch { throw usage(`file not found: ${inputPath}`); }
     if (!stat.isFile()) throw usage(`not a regular file: ${inputPath}`);
+    // The native form expands Windows 8.3 short names such as CREDEN~1.
+    checkPath(fs.realpathSync.native(resolved));
     if (stat.size > maxFileBytes) throw usage(`file exceeds the 20 MiB attachment limit: ${inputPath}`);
     totalBytes += stat.size;
     if (totalBytes > maxTotalBytes) throw usage("attachments exceed the 100 MiB total limit");

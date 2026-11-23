@@ -12,7 +12,7 @@ test.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
 test("media create request bodies match the captured image and video shapes", async () => {
   const calls = [];
   const media = createMedia({ apiClient: { requestAuthenticated: async (path, init) => { calls.push({ path, body: init.body }); return path.includes("images") ? { data: [{ url: "https://imgen.x.ai/a.jpeg" }] } : { request_id: "job-1" }; } } });
-  await media.generateImage({ prompt: "apple", sources: [], model: "grok-imagine-image-2.0" });
+  await media.generateImage({ prompt: "apple", sources: [], model: "grok-imagine-image-2.0", outDir });
   await media.createVideoJob({ prompt: "apple", seconds: 2, model: "grok-imagine-video-1.5" });
   assert.deepEqual(calls, [
     { path: "/images/generations", body: { model: "grok-imagine-image-2.0", prompt: "apple", n: 1 } },
@@ -22,7 +22,7 @@ test("media create request bodies match the captured image and video shapes", as
 
 test("image generation limits sources and maps moderation errors", async () => {
   const media = createMedia({ apiClient: { requestAuthenticated: async () => { const error = new Error("blocked"); error.error_class = "moderation"; throw error; } } });
-  await assert.rejects(() => media.generateImage({ prompt: "x", sources: [], model: "m" }), (error) => error.error_class === "moderation");
+  await assert.rejects(() => media.generateImage({ prompt: "x", sources: [], model: "m", outDir }), (error) => error.error_class === "moderation");
   await assert.rejects(() => media.generateImage({ prompt: "x", sources: [1, 2, 3, 4], model: "m" }), /at most 3/);
 });
 
@@ -55,7 +55,7 @@ test("imagine and video send one request on a 503 and report it as not retryable
   let calls = 0;
   const apiClient = createApiClient({ env: { XAI_API_KEY: "test-key-not-for-logs" }, fetchImpl: async () => { calls += 1; return new Response('{"error":"down"}', { status: 503 }); } });
   const media = createMedia({ apiClient });
-  await assert.rejects(media.generateImage({ prompt: "apple", sources: [], model: "m" }), (error) => error.retryable === false);
+  await assert.rejects(media.generateImage({ prompt: "apple", sources: [], model: "m", outDir }), (error) => error.retryable === false);
   assert.equal(calls, 1);
   await assert.rejects(media.createVideoJob({ prompt: "apple", seconds: 2, model: "m" }), (error) => error.retryable === false);
   assert.equal(calls, 2);

@@ -10,8 +10,8 @@ The runtime reads the account's live xAI model catalog (cached 24 hours) and pic
 | Job | Role | Rule | Model today (2026-11-21) |
 |---|---|---|---|
 | ask, review, transfer | fast | cheapest price tier, newest model in it | grok-4.3 |
-| ask `--live`, adversarial review, rescue diagnosis | strong | newest model at any price | grok-4.7 |
-| rescue `--coding` | coding | xAI's `grok-build-latest` alias, else strong | grok-4.5 |
+| ask `--live`, adversarial review, rescue diagnosis | strong | highest price tier, newest model in it | grok-4.7 |
+| rescue `--coding` | coding | the `grok-build-latest` alias target, else the strong route (a `_STRONG` pin applies), reported as `roleFallback: "strong"` | grok-4.5 |
 | imagine | image | newest non-`-lite` image model | grok-imagine-image-2.0 |
 | video | video | newest non-`-lite` video model | grok-imagine-video-1.5 |
 

@@ -23,7 +23,15 @@ test("routing policy is key-aware, versioned, and explicitly overrides image rou
   assert.match(present.stdout, /stop-review gate/);
 });
 
-test("speak and transcribe slash commands exist and the version is 0.1.5", () => {
+test("the developer probe is removed and nothing refers to it (spec 006 R18)", () => {
+  assert.equal(fs.existsSync("scripts/probe.mjs"), false);
+  const files = (dir) => fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => entry.isDirectory() ? files(`${dir}/${entry.name}`) : [`${dir}/${entry.name}`]);
+  for (const file of ["scripts", "commands", "skills", "hooks", ".claude-plugin"].flatMap(files)) {
+    assert.ok(!fs.readFileSync(file, "utf8").includes("probe.mjs"), file);
+  }
+});
+
+test("speak and transcribe slash commands exist and the version is 0.1.6", () => {
   for (const file of ["commands/speak.md", "commands/transcribe.md"]) assert.ok(fs.existsSync(file), file);
-  assert.equal(JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8")).version, "0.1.5");
+  assert.equal(JSON.parse(fs.readFileSync(".claude-plugin/plugin.json", "utf8")).version, "0.1.6");
 });
