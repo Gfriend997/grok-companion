@@ -1,5 +1,7 @@
 # Live capability probe report
 
+Note: the probe script was removed in 0.1.6 (spec 006, D11), and the fixtures are no longer refreshed from this repository.
+
 Date: 2026-08-13. All results captured live against api.x.ai with the account key.
 Fixtures in `tests/fixtures/` are scrubbed and are the ground truth for mocked tests.
 

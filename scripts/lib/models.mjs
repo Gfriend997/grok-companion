@@ -91,6 +91,13 @@ function writeCache(file, data) {
   } catch { /* A cache write failure must never block a command. */ }
 }
 
+// xAI answers an invalid key with HTTP 400 "Incorrect API key provided", which api.mjs classes as usage.
+// Discovery treats it as auth so setup exits 2; other commands keep the api.mjs class.
+function discoveryErrorClass(reason) {
+  if (reason?.error_class === "usage" && /incorrect api key|invalid api key/i.test(String(reason?.message ?? ""))) return "auth";
+  return reason?.error_class ?? "network";
+}
+
 // Options: fresh bypasses cache and the negative window (setup); refetch bypasses only the cache (unknown --model).
 export async function loadCatalog({ request, env = process.env, home = os.homedir(), now = Date.now, fresh = false, refetch = false } = {}) {
   const kinds = Object.fromEntries(Object.keys(KINDS).map((kind) => [kind, { available: false, source: "none", entries: [] }]));
@@ -126,7 +133,7 @@ export async function loadCatalog({ request, env = process.env, home = os.homedi
       delete cache.failedAt[kind];
     } else {
       cache.failedAt[kind] = time;
-      useStale(kind, result.reason?.error_class ?? "network");
+      useStale(kind, discoveryErrorClass(result.reason));
     }
   });
   writeCache(file, cache);
@@ -165,27 +172,42 @@ function eligible(entry, kind) {
 
 export const acceptsImage = (entry) => entry.inputModalities.includes("image");
 
+// Light check, for the coding alias target and the built-in fallback: right kind (the lookup is per kind), text output for language, image filter.
+function passesLightCheck(entry, kind, needsImageInput) {
+  if (!entry) return false;
+  if (kind === "language" && !entry.outputModalities.includes("text")) return false;
+  return !needsImageInput || acceptsImage(entry);
+}
+
+const route = (entry, role, source) => ({ model: entry.id, routeSource: source, modelVerified: true, priceChanged: priceChangedFor(entry, role) });
+
+// Pure: reads no env. Returns a route, or { defer: "strong" } for coding without a usable alias (selectModel resolves strong).
 export function resolveRole(role, catalog, { needsImageInput = false } = {}) {
   const kind = ROLE_KIND[role];
   if (!kind) throw routeError("usage", `unknown routing role: ${role}`);
   const state = catalog.kinds[kind];
-  if (!state?.available) return { model: FALLBACK_ROUTES[role], routeSource: "fallback", modelVerified: false, priceChanged: null };
-  const fits = (entry) => !needsImageInput || acceptsImage(entry);
-  const pool = state.entries.filter((entry) => eligible(entry, kind) && fits(entry)).sort(byNewest);
-  let chosen = null;
+  if (!state?.available) {
+    const fallback = { model: FALLBACK_ROUTES[role], routeSource: "fallback", modelVerified: false, priceChanged: null };
+    return role === "coding" ? { ...fallback, roleFallback: null } : fallback;
+  }
   if (role === "coding") {
-    chosen = lookup(CODING_ALIAS, state.entries);
-    if (!chosen || !fits(chosen)) return resolveRole("strong", catalog, { needsImageInput });
+    const target = lookup(CODING_ALIAS, state.entries);
+    return passesLightCheck(target, kind, needsImageInput) ? { ...route(target, role, state.source), roleFallback: null } : { defer: "strong" };
   }
-  if (!chosen && role === "fast" && pool.length) {
-    const cheapest = Math.min(...pool.map((entry) => entry.prices.completion_text_token_price));
-    chosen = pool.find((entry) => entry.prices.completion_text_token_price === cheapest);
+  const pool = state.entries.filter((entry) => eligible(entry, kind) && (!needsImageInput || acceptsImage(entry))).sort(byNewest);
+  let chosen = null;
+  if (pool.length && (role === "fast" || role === "strong")) {
+    // fast: newest in the cheapest tier; strong: newest in the highest price tier.
+    const prices = pool.map((entry) => entry.prices.completion_text_token_price);
+    const tier = role === "fast" ? Math.min(...prices) : Math.max(...prices);
+    chosen = pool.find((entry) => entry.prices.completion_text_token_price === tier);
+  } else if (pool.length) {
+    chosen = pool[0];
   }
-  if (!chosen && role !== "fast") chosen = pool[0] ?? null;
   if (!chosen) {
     const fallback = lookup(FALLBACK_ROUTES[role], state.entries);
-    if (fallback && fits(fallback)) chosen = fallback;
+    if (passesLightCheck(fallback, kind, needsImageInput)) chosen = fallback;
   }
   if (!chosen) throw routeError("capability_unavailable", `no listed ${kind} model fits the ${role} role${needsImageInput ? " with image input" : ""}; pass --model with a listed model`);
-  return { model: chosen.id, routeSource: state.source, modelVerified: true, priceChanged: priceChangedFor(chosen, role) };
+  return route(chosen, role, state.source);
 }

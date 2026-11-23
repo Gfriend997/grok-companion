@@ -170,8 +170,10 @@ function validTranscript(raw) {
 }
 
 export function createMedia({ apiClient = { requestAuthenticated: defaultRequest }, fetchImpl = globalThis.fetch } = {}) {
-  async function generateImage({ prompt, sources = [], model }) {
+  async function generateImage({ prompt, sources = [], model, out, outDir = DEFAULT_MEDIA_DIR }) {
+    if (typeof model !== "string" || !model) throw usage("image generation requires a model");
     if (!Array.isArray(sources) || sources.length > 3) throw usage("image generation accepts at most 3 sources");
+    prepareOut(out, outDir, "grok-image");
     const input = sources.length === 1 ? { image: { url: sources[0] } } : sources.length ? { images: sources.map((url) => ({ type: "image_url", url })) } : {};
     const body = { model, prompt, n: 1, ...input };
     const raw = await apiClient.requestAuthenticated(sources.length ? "/images/edits" : "/images/generations", { method: "POST", body });
@@ -226,8 +228,9 @@ export function createMedia({ apiClient = { requestAuthenticated: defaultRequest
   }
 
   async function createVideoJob({ prompt, seconds, fromImage, model }) {
+    if (typeof model !== "string" || !model) throw usage("video generation requires a model");
     if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw usage("video seconds must be an integer from 1 to 30");
-    const body = { model, prompt, duration: seconds, ...(fromImage ? { image: fromImage } : {}) };
+    const body = { model, prompt, duration: seconds, ...(fromImage ? { image: { url: fromImage } } : {}) };
     const raw = await apiClient.requestAuthenticated("/videos/generations", { method: "POST", body });
     if (!raw?.request_id) throw usage("video generation response has no request_id");
     return { providerJobId: raw.request_id };

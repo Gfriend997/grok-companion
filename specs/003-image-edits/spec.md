@@ -46,6 +46,7 @@ REA: not applicable. This ports existing, reviewed behaviour from codex-plugin.
 
 - T1: added `tests/image-edits.test.mjs`, with 6 tests adapted from codex-plugin. They failed before the change (0 pass, 5 fail).
 - T2 to T4: done. Only the image-input filter (codex-plugin D3) was ported from codex `models.mjs`. Codex-only routing rules (D1 strong by price tier, D4, D6, D7) were not ported. Claude routing semantics are unchanged.
+  - Note (2026-11-22, spec 006): superseded by spec 006 D9. The codex-plugin routing rules (strong by price tier, the coding defer with `roleFallback`, the light check) are now ported, and the first known limit below now applies with the light check.
 - Changed behaviour: `tests/cli.test.mjs` now expects a saved path instead of raw `b64` (R3), and its harness gained a `saveBase64` stub.
 - T5: updated `commands/imagine.md` and the README; version is now 0.1.3.
 - T6: `node --test` passes 148 of 148, and the JSON files parse.

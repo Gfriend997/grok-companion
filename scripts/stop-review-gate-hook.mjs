@@ -5,13 +5,13 @@ import crypto from "node:crypto";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { companionHome, envelope, readConfig, repoRoot, runGit, writeConfig } from "./grok-companion.mjs";
+import { DIFF_ARGS, companionHome, envelope, readConfig, repoRoot, runGit, writeConfig } from "./grok-companion.mjs";
 import { riskyDiff } from "./lib/risk.mjs";
 
 const CLI = fileURLToPath(new URL("./grok-companion.mjs", import.meta.url));
 const QUIET = { code: 0, stderr: "" };
 
-// A bare `review` reads the same `git diff` as this hook (D16).
+// A bare `review` reads the same `git diff HEAD` text as this hook (DIFF_ARGS, spec 006 R4).
 const runReview = () => spawnSync(process.execPath, [CLI, "review"], { encoding: "utf8", timeout: 9 * 60 * 1000, maxBuffer: 10 * 1024 * 1024, windowsHide: true });
 
 export async function runGate({ home = companionHome(), git = runGit, readStdin = () => readFileSync(0, "utf8"), review = runReview } = {}) {
@@ -22,8 +22,9 @@ export async function runGate({ home = companionHome(), git = runGit, readStdin 
   let input = {};
   try { input = JSON.parse(readStdin() || "{}"); } catch { /* no hook input */ }
   if (input?.stop_hook_active === true) return QUIET;
-  if (git(["diff", "--quiet"]).status !== 1) return QUIET;
-  const diff = git(["diff"]);
+  // --quiet must come before the "--" that ends the options.
+  if (git(["diff", "--quiet", ...DIFF_ARGS.slice(1)]).status !== 1) return QUIET;
+  const diff = git([...DIFF_ARGS]);
   // `review` refuses a diff over the read limit, so the gate skips it without a request.
   if (diff.error?.code === "ENOBUFS") return { code: 0, stderr: "grok stop-review gate skipped: diff too large to review (over the 10 MB read limit); nothing was sent\n" };
   if (diff.status !== 0) return QUIET;

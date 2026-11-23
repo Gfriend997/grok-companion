@@ -8,7 +8,7 @@ import { createMedia } from "../scripts/lib/media.mjs";
 import * as scrubModule from "../scripts/lib/scrub.mjs";
 import * as attachModule from "../scripts/lib/attach.mjs";
 import { main } from "../scripts/grok-companion.mjs";
-import { harness, modelsFixture } from "./cli.test.mjs";
+import { harness, modelsFixture } from "./support/harness.mjs";
 
 function mp3() {
   const bytes = Buffer.alloc(417);

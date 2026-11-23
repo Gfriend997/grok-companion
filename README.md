@@ -102,7 +102,7 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 /grok-companion:video --seconds 4 a paper plane looping through an office
 /grok-companion:speak "Release notes are ready for review."
 /grok-companion:transcribe --file meeting.mp3
-/grok-companion:review                      # Grok reviews your working diff
+/grok-companion:review                      # Grok reviews your staged and unstaged changes
 /grok-companion:rescue why does tests/jobs.test.mjs flake on CI?
 ```
 
@@ -112,15 +112,15 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 |---|---|
 | `/grok-companion:setup` | Check key presence + API reachability + live model catalog and resolved routes; `--gate on\|off` turns the stop-review gate on or off for the current repository only |
 | `/grok-companion:ask` | One question; `--file` (repeatable) attaches text/jpg/png; `--live` enables Live Search + X Search |
-| `/grok-companion:review` | Grok reviews your current diff (falls back to last commit) |
+| `/grok-companion:review` | Grok reviews your staged and unstaged changes to tracked files (`git diff HEAD`; falls back to the last commit). Attach untracked files with `--file` |
 | `/grok-companion:adversarial-review` | Hostile review pass hunting for breakage |
 | `/grok-companion:rescue` | Delegate a task; Grok returns a plan and diffs for Claude to apply |
 | `/grok-companion:imagine` | Generate or edit an image; `--source` (≤3, repeatable) sends an edit to `/images/edits`. Results are saved locally, including base64 results |
-| `/grok-companion:video` | Generate a video; `--seconds` required, `--from-image` for image-to-video; refused with a cost estimate until `--confirm-cost` is added after the user approves; background job by default, `--wait` for foreground |
+| `/grok-companion:video` | Generate a video; `--seconds` required, `--from-image <local JPEG or PNG, or https:// URL>` for image-to-video (a local image is checked and encoded before the estimate); refused with a cost estimate until `--confirm-cost` is added after the user approves; background job by default, `--wait` for foreground |
 | `/grok-companion:speak` | Billed text to MP3 speech; `--text-file` for long text, `--voice`, `--language`, `--out`. Saved locally |
 | `/grok-companion:transcribe` | Billed transcript of one local MP3 or WAV (`--file`); `--language`, `--model`. Output is enveloped as untrusted |
 | `/grok-companion:status` | List video jobs and background text jobs (`--id` for one), JSON output |
-| `/grok-companion:result` | Fetch a finished job's output (a background text job prints its foreground output) / download a video artifact |
+| `/grok-companion:result` | Fetch a finished job's output (a background text job prints its foreground output) / download a video artifact once; later calls return the stored path, even if the file was moved |
 | `/grok-companion:cancel` | Cancel a job: a background text worker is stopped only when its process is verified, otherwise abandoned locally; video jobs are abandoned locally. The request may still be billed |
 | `/grok-companion:transfer` | Summarize the current session into a Grok task (context handoff) |
 
@@ -137,13 +137,14 @@ The runtime reads your account's live xAI model catalog (`/v1/language-models`,
 `/v1/image-generation-models`, `/v1/video-generation-models`), caches it for 24 hours at
 `~/.grok-companion/models.json`, and picks a model by job role. New xAI models are used
 without a plugin update, and retired ones stop being defaults. **There is no price limit:**
-when xAI releases a newer, pricier model, the strong, image and video roles move to it.
+when xAI releases a newer, pricier model, the strong, image and video roles move to it. A newer,
+cheaper model no longer takes the strong role.
 
 | Job | Role | Rule | Today (2026-11-21) |
 |---|---|---|---|
 | ask, review, transfer | fast | cheapest price tier, newest model in it | grok-4.3 |
-| ask --live, adversarial-review, rescue | strong | newest model, any price | grok-4.7 |
-| rescue --coding | coding | xAI's `grok-build-latest` alias, else strong | grok-4.5 |
+| ask --live, adversarial-review, rescue | strong | highest price tier, newest model in it | grok-4.7 |
+| rescue --coding | coding | the target of xAI's `grok-build-latest` alias, else the strong route (a `_STRONG` pin applies), reported as `roleFallback: "strong"` | grok-4.5 |
 | imagine | image | newest non-`-lite` image model | grok-imagine-image-2.0 |
 | video | video | newest non-`-lite` video model | grok-imagine-video-1.5 |
 
@@ -156,7 +157,9 @@ fallback IDs above are used.
 Every result reports `model`, `routeSource` (`flag`, `env`, `live`, `cache`, `cache-stale`,
 `fallback`, and `default` for the built-in transcription model), `modelVerified`, and `priceChanged`. `priceChanged` is true when the model's
 listed price differs from the 2026-11-21 price for its role. For `--live`, these appear on a
-`Route:` line after the untrusted-content envelope.
+`Route:` line after the untrusted-content envelope. `rescue --coding` results also report
+`roleFallback`: `null` for the alias target, a pin or `--model`, and `"strong"` when the strong
+route was used.
 
 Overrides: `--model <id-or-alias>` accepts any catalog model of the right kind, and rejects
 unknown or wrong-kind models before any billed request. Pin a role with the environment
@@ -175,21 +178,22 @@ wins over a pin. `--build-unavailable` is accepted but no longer needed.
   job is cancelled or the worker dies, and it is never re-sent. A `running` text job older than
   6 minutes is reported as `submission_unknown`.
 - The stop-review gate is off by default and set per repository (`setup --gate on`). At stop it
-  reviews only a large or risky `git diff` (unstaged tracked changes), at most once per distinct
-  diff and once per stop sequence. A routine diff costs nothing and prints nothing. A diff is risky
+  reviews only a large or risky `git diff HEAD` (staged and unstaged tracked changes, the same text
+  a bare `review` reads), at most once per distinct diff and once per stop sequence. Staging a
+  diff that was already reviewed does not bill it again. A routine diff costs nothing and prints nothing. A diff is risky
   when it has 400 or more changed lines, or when a changed path word starts with, or a changed
   line matches, one of these:
 
   | Category | Path word stems and files | Changed-line words |
   |---|---|---|
   | auth | auth, login, signin, oauth, sso, session, jwt, password, passwd, permission, rbac, acl | password, authenticat, authoriz, jwt, oauth, bcrypt, argon2, set-cookie |
-  | secrets | secret, credential, token, apikey, keystore, vault; `.env*`, `*.pem`, `*.key`, `*.pfx` | secret, api key, private key, access token, credential |
+  | secrets | secret, credential, token, apikey, keystore, vault; `.env*`, `*.pem`, `*.key`, `*.pfx`, file names holding `api_key`, `api-key`, `apikey`, `private_key`, `private-key` or `privatekey` | secret, credential, and `api key`, `private key`, `access token` written with a space, `_`, `-` or nothing between the words |
   | data | database, db, storage, backup, delete, purge | drop table/database/column/schema, truncate, delete from, rm -rf, rmSync, unlink, Remove-Item, deleteMany, destroy_all |
   | money | payment, billing, invoice, checkout, stripe, paypal, pricing, refund, subscription, ledger, payout | payment, invoice, refund, stripe, paypal, billing, payout |
   | migration | migration, migrate, schema, prisma, alembic; `*.sql` | create/alter table, add column, migration |
   | security | security, crypto, encrypt, decrypt, cors, csrf, firewall, rls, sanitize | encrypt, decrypt, csrf, cors, sanitiz, eval(, child_process, rejectUnauthorized, verify=false, --no-verify, row level security, icacls, chmod |
-- Requests estimated at ≥200K tokens are refused without `--allow-long-context` — xAI bills
-  the *entire* request at roughly double above that threshold.
+- Requests estimated at ≥200K tokens (attachments plus the prompt) are refused without
+  `--allow-long-context` — xAI bills the *entire* request at roughly double above that threshold.
 - `--live` responses report the API's own usage fields (sources used, tool calls, cost);
   `--max-sources` caps search breadth.
 - **No billable request is ever re-sent.** Every command, text ones included, sends one
@@ -238,7 +242,8 @@ sources before acting on anything it says.
   from bytes.
 - **Outbound preflight.** Prompt text and attachments are scanned before any request;
   key-shaped strings block the call and credential-file paths (`.env*`, `*.pem`, key stores)
-  are refused as attachments. Binary documents (PDF, Office, OpenDocument, zip, epub, or
+  are refused for every attachment, image or text (`--file`, `imagine --source`,
+  `video --from-image`), on the path as given and on its real path. Binary documents (PDF, Office, OpenDocument, zip, epub, or
   any file with a NUL byte in its first 8 KB) are rejected too: convert to markdown first
   (MarkItDown) and attach the `.md`. `--live` cannot be combined with `--file`.
 - Everything written to job state or output passes a scrubber; masked-match counts are logged.
@@ -251,7 +256,7 @@ sources before acting on anything it says.
 ## Testing
 
 ```
-node --test tests/
+node tests/index.mjs
 ```
 
 For the Codex package, from the repo root:
@@ -261,7 +266,8 @@ node --test codex/tests/*.test.mjs
 ```
 
 Offline suites run against live-captured fixtures (`tests/fixtures/`, see
-`docs/PROBE_REPORT.md`). Live end-to-end (uses your key, makes real API calls, media calls
+`docs/PROBE_REPORT.md`). They are fixed captures (2026-08-13, and the catalog of 2026-11-21);
+this repository no longer holds a script that refreshes them. Live end-to-end (uses your key, makes real API calls, media calls
 are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` plus
 `status`/`result`, and `speak` one sentence then `transcribe` the saved MP3.
 
@@ -273,6 +279,7 @@ are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` 
 | `410` mentioning Live Search | You are on an old fork sending `search_parameters`; current builds use the Agent Tools API on `/v1/responses`. Update the plugin. |
 | Request refused with a long-context message | Estimated ≥200K tokens; xAI bills the whole request at ~2x above that line. Trim attachments or pass `--allow-long-context` deliberately. |
 | `video` refuses to run | `--seconds` is required and capped. Without `--confirm-cost` it exits 9 with the estimate and sends nothing: ask the user, then add the flag. |
+| `video --from-image` refused | A local value must be a JPEG or PNG file of at most 20 MiB whose path holds no credential word; any other value must start with `https://`. `http://` and other schemes are refused. Nothing is sent. |
 | Artifact download refused | The URL's host is outside the allowlist (`imgen.x.ai`, `vidgen.x.ai`). That is the security model working, not a bug. |
 | Slash commands missing after install | Marketplace changes need a session restart. |
 
@@ -304,7 +311,8 @@ engine: build messages (preset + prompt + attachments) → one REST call → pri
 binary responses; one attempt per request), `attach.mjs` (files → content parts, EXIF
 strip), `media.mjs` (image, video and speech generation, transcription with audio checks,
 unauthenticated artifact downloads),
-`jobs.mjs` (job store for async video and background text jobs), `risk.mjs` (the
+`jobs.mjs` (job store for async video and background text jobs, with locked writes that never
+overwrite a finished job; `GROK_JOBS_DIR` selects its folder, default `~/.grok-companion/jobs`), `risk.mjs` (the
 stop-review gate's risky-diff rule), `scrub.mjs` (masking + outbound preflight). Design and verification history: `docs/specs/`, `docs/PROBE_REPORT.md`.
 
 ## Credits
@@ -334,9 +342,28 @@ endorsed by OpenAI or xAI.
   every large or risky diff of that repository to xAI; the preflight rejects secret-shaped
   content but cannot tell whether code is confidential, so never turn it on in a
   client-confidential repository. The risky-diff rule is a word list: `tokenizer`, `author`
-  or a README that mentions "payment" bill a review, while risky logic in a neutrally named
-  file, staged-only changes and untracked files get none. A failed or timed-out review is not
-  retried for that diff, and the gate blocks only one stop per stop sequence.
+  or a README that mentions "payment", "API key", "access token" or "private key" bill a review,
+  while risky logic in a neutrally named file and untracked files get none (`git add` brings a
+  new file in). A staged change that was undone in the working tree is not reviewed, and in a
+  repository with no commit `review` finds no diff and the gate stays silent. A failed or
+  timed-out review is not retried for that diff, and the gate blocks only one stop per stop
+  sequence.
+- `--from-image`: the whole image (up to 20 MiB) is sent as base64 in the request body; only
+  JPEG and PNG are accepted; an `https://` URL is sent as typed, on any host; the cost estimate
+  does not rise for an image input. A path check cannot prove that an image shows no secret,
+  and a file in a folder whose name holds a credential word is refused whatever it contains.
+- `result` trusts the stored video path: if the file was moved or deleted it still prints that
+  path, and a later `--out` is ignored. A failure after `video --wait` submits leaves the job
+  `submitted` or `running`; run `status --id` and `result --id`.
+- Job writes take a per-job lock. A foreground write that stays busy for one second fails with
+  `job is busy; retry the local operation`; run the command again (nothing is re-sent). A
+  background worker retries the lock for up to 60 seconds. If its final write still fails, for
+  that or any other reason, it saves its answer to `<id>.answer.json`, which `status` and
+  `result` apply. Lock and answer files left by a killed
+  process are not pruned.
+- The strong role takes the newest model in the highest price tier, so it can cost more than
+  under 0.1.5 once xAI releases a newer model below the top tier, and a newer cheaper model is
+  never used for strong without `--model` or a pin.
 - A background job's worker can be stopped only when its process command line can be read
   (PowerShell on Windows, `ps` elsewhere); otherwise `cancel` abandons the job locally and the
   worker ends by itself within about 5 minutes. The job record keeps the prompt, file paths and

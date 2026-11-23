@@ -21,17 +21,17 @@ function requester(raw = fixture, { fail = [] } = {}) {
 }
 const catalogFrom = (raw = fixture) => ({ kinds: Object.fromEntries(Object.keys(KINDS).map((kind) => [kind, { available: true, source: "live", entries: normalize(raw[kind], kind) }])) });
 const withLanguage = (extra, raw = clone(fixture)) => { raw.language.models.push(extra); return raw; };
-const flagship = (id, created, price) => ({ id, created, input_modalities: ["text", "image"], output_modalities: ["text"], completion_text_token_price: price, capabilities: { reasoning_effort: ["low", "high"] }, aliases: [] });
+const flagship = (id, created, price, inputs = ["text", "image"]) => ({ id, created, input_modalities: inputs, output_modalities: ["text"], completion_text_token_price: price, capabilities: { reasoning_effort: ["low", "high"] }, aliases: [] });
 
 test("2026-11-21 catalog resolves every role to the recorded defaults", () => {
   const catalog = catalogFrom();
   const resolved = Object.fromEntries(Object.keys(FALLBACK_ROUTES).map((role) => [role, resolveRole(role, catalog).model]));
   assert.deepEqual(resolved, FALLBACK_ROUTES);
-  assert.deepEqual(resolveRole("coding", catalog), { model: "grok-4.5", routeSource: "live", modelVerified: true, priceChanged: false });
+  assert.deepEqual(resolveRole("coding", catalog), { model: "grok-4.5", routeSource: "live", modelVerified: true, priceChanged: false, roleFallback: null });
   assert.equal(resolveRole("video", catalog).priceChanged, null);
 });
 
-test("strong follows a newer flagship at any price and flags the price change", () => {
+test("strong takes the newest model in the highest price tier and flags a price change", () => {
   const same = resolveRole("strong", catalogFrom(withLanguage(flagship("grok-4.8", 1799999999, 60000))));
   assert.equal(same.model, "grok-4.8");
   assert.equal(same.priceChanged, false);
@@ -39,20 +39,58 @@ test("strong follows a newer flagship at any price and flags the price change", 
   assert.equal(pricier.model, "grok-5");
   assert.equal(pricier.priceChanged, true);
   const cheaper = resolveRole("strong", catalogFrom(withLanguage(flagship("grok-4.8-cheap", 1799999999, 30000))));
-  assert.equal(cheaper.priceChanged, true);
+  assert.equal(cheaper.model, "grok-4.7", "a newer cheaper model never becomes strong");
+  assert.equal(cheaper.priceChanged, false);
 });
 
+test("price comes before age: an older pricier model beats a newer cheaper one", () => {
+  const raw = withLanguage(flagship("grok-old-max", 1700000000, 90000));
+  raw.language.models.push(flagship("grok-new-mid", 1899999999, 60000));
+  assert.equal(resolveRole("strong", catalogFrom(raw)).model, "grok-old-max");
+  const tie = withLanguage(flagship("grok-9", 1788307200, 30000));
+  assert.equal(resolveRole("strong", catalogFrom(tie)).model, "grok-4.7", "timestamp tie with unequal prices: price decides");
+});
+
+test("image filter runs before the tier for fast and strong", () => {
+  const raw = withLanguage(flagship("grok-4.4-textonly", 1799999999, 10000, ["text"]));
+  raw.language.models.push(flagship("grok-6-textonly", 1799999999, 200000, ["text"]));
+  const catalog = catalogFrom(raw);
+  assert.equal(resolveRole("fast", catalog).model, "grok-4.4-textonly");
+  assert.equal(resolveRole("fast", catalog, { needsImageInput: true }).model, "grok-4.3");
+  assert.equal(resolveRole("strong", catalog).model, "grok-6-textonly");
+  assert.equal(resolveRole("strong", catalog, { needsImageInput: true }).model, "grok-4.7", "strong drops a tier for image input");
+});
+
+test("R17 table: on the 2026-11-21 catalog the 0.1.5 rule and the new rule pick the same five models", () => {
+  const catalog = catalogFrom();
+  const table = { fast: "grok-4.3", strong: "grok-4.7", coding: "grok-4.5", image: "grok-imagine-image-2.0", video: "grok-imagine-video-1.5" };
+  // The 0.1.5 strong rule: the newest eligible language model at any price.
+  const eligible = catalog.kinds.language.entries.filter((entry) => entry.outputModalities.includes("text") && entry.capabilities.reasoningEffort.length && Number.isFinite(entry.prices.completion_text_token_price));
+  const oldStrong = (needsImage) => eligible.filter((entry) => !needsImage || entry.inputModalities.includes("image")).sort((a, b) => b.created - a.created || b.id.localeCompare(a.id, "en", { numeric: true }))[0].id;
+  for (const needsImageInput of [false, true]) {
+    assert.deepEqual(Object.fromEntries(Object.keys(table).map((role) => [role, resolveRole(role, catalog, { needsImageInput }).model])), table, `image input ${needsImageInput}`);
+    assert.equal(oldStrong(needsImageInput), table.strong);
+  }
+  assert.equal(resolveRole("coding", catalog).roleFallback, null);
+  assert.deepEqual([resolveRole("strong", catalog), resolveRole("coding", catalog)].map((route) => route.priceChanged), [false, false]);
+});
 test("fast stays in the cheapest tier and takes the newest model in it", () => {
   assert.equal(resolveRole("fast", catalogFrom(withLanguage(flagship("grok-4.8", 1799999999, 60000)))).model, "grok-4.3");
   assert.equal(resolveRole("fast", catalogFrom(withLanguage(flagship("grok-4.4-mini", 1799999999, 25000)))).model, "grok-4.4-mini");
 });
 
-test("coding falls back to strong when the build alias disappears", () => {
-  const raw = clone(fixture);
-  for (const model of raw.language.models) model.aliases = (model.aliases ?? []).filter((alias) => alias !== "grok-build-latest");
-  assert.equal(resolveRole("coding", catalogFrom(raw)).model, "grok-4.7");
-});
+const noAlias = (raw) => { for (const model of raw.language.models) model.aliases = (model.aliases ?? []).filter((alias) => alias !== "grok-build-latest"); return raw; };
 
+test("coding defers to strong when the build alias disappears or fails the light check", () => {
+  assert.deepEqual(resolveRole("coding", catalogFrom(noAlias(clone(fixture)))), { defer: "strong" });
+  const textOnly = clone(fixture);
+  textOnly.language.models.find((model) => model.id === "grok-4.5").input_modalities = ["text"];
+  assert.equal(resolveRole("coding", catalogFrom(textOnly)).model, "grok-4.5");
+  assert.deepEqual(resolveRole("coding", catalogFrom(textOnly), { needsImageInput: true }), { defer: "strong" });
+  const noText = clone(fixture);
+  noText.language.models.find((model) => model.id === "grok-4.5").output_modalities = ["image"];
+  assert.deepEqual(resolveRole("coding", catalogFrom(noText)), { defer: "strong" });
+});
 test("image and video take the newest non-lite model; lite stays selectable", () => {
   const raw = clone(fixture);
   raw.image.models.push({ id: "grok-imagine-image-3.0", created: 1799999999, input_modalities: ["text"], output_modalities: ["image"], image_price: 900000000 });
@@ -70,19 +108,30 @@ test("ties break by numeric-aware id and unpriced language models are skipped", 
   assert.equal(resolveRole("strong", catalogFrom(raw)).model, "grok-4.10");
 });
 
-test("no eligible model uses a listed fallback, else asks for --model", () => {
+test("no eligible model uses the listed fallback under the light check, else asks for --model", () => {
   const raw = clone(fixture);
   for (const model of raw.language.models) delete model.capabilities;
-  assert.equal(resolveRole("strong", catalogFrom(raw)).model, "grok-4.7");
+  assert.deepEqual(resolveRole("strong", catalogFrom(raw)), { model: "grok-4.7", routeSource: "live", modelVerified: true, priceChanged: false });
+  const textOnly = clone(raw);
+  for (const model of textOnly.language.models) model.input_modalities = ["text"];
+  assert.throws(() => resolveRole("strong", catalogFrom(textOnly), { needsImageInput: true }), (error) => error.error_class === "capability_unavailable");
   raw.language.models = [{ id: "grok-x", created: 1, output_modalities: ["text"], aliases: [] }];
   assert.throws(() => resolveRole("strong", catalogFrom(raw)), (error) => error.error_class === "capability_unavailable");
 });
 
-test("unavailable kind falls back unverified", () => {
+test("an unpriced listed fallback is used under the light check; a non-text one is not", () => {
+  const raw = clone(fixture);
+  raw.language.models = [{ id: "grok-4.7", created: 1788307200, output_modalities: ["text"], aliases: [] }];
+  assert.equal(resolveRole("strong", catalogFrom(raw)).model, "grok-4.7");
+  assert.deepEqual(resolveRole("coding", catalogFrom(raw)), { defer: "strong" });
+  raw.language.models[0].output_modalities = ["image"];
+  assert.throws(() => resolveRole("strong", catalogFrom(raw)), (error) => error.error_class === "capability_unavailable");
+});
+test("unavailable kind falls back unverified; offline coding is grok-4.5 with roleFallback null", () => {
   const catalog = { kinds: { language: { available: false, source: "none", entries: [] }, image: { available: false, source: "none", entries: [] }, video: { available: false, source: "none", entries: [] } } };
   assert.deepEqual(resolveRole("fast", catalog), { model: "grok-4.3", routeSource: "fallback", modelVerified: false, priceChanged: null });
+  assert.deepEqual(resolveRole("coding", catalog, { needsImageInput: true }), { model: "grok-4.5", routeSource: "fallback", modelVerified: false, priceChanged: null, roleFallback: null });
 });
-
 test("findModel accepts ids and aliases, and spots unknown and wrong-kind models", () => {
   const catalog = catalogFrom();
   assert.equal(findModel("grok-4.20-multi-agent", "language", catalog).entry.id, "grok-4.20-multi-agent-0309");
@@ -203,17 +252,27 @@ test("cache entries with missing fields, future times or a bad failedAt are igno
   assert.equal((await loadCatalog({ request: requester().request, env, home, now: () => time })).kinds.language.source, "live", "bad failedAt");
 });
 
-test("coding uses the strong route whenever the build alias is absent", () => {
+test("the alias target is exempt from the price and reasoning_effort rules", () => {
   const raw = clone(fixture);
-  raw.language.models = [{ id: "grok-4.7", created: 1788307200, output_modalities: ["text"], aliases: [] }];
-  const catalog = catalogFrom(raw);
-  assert.equal(resolveRole("strong", catalog).model, "grok-4.7");
-  assert.deepEqual(resolveRole("coding", catalog), resolveRole("strong", catalog));
+  const target = raw.language.models.find((model) => model.id === "grok-4.5");
+  delete target.capabilities;
+  delete target.completion_text_token_price;
+  const route = resolveRole("coding", catalogFrom(raw));
+  assert.equal(route.model, "grok-4.5");
+  assert.equal(route.priceChanged, null);
+  assert.equal(route.roleFallback, null);
 });
-
 test("catalog fetch failures keep their error class", async () => {
   const denied = async () => { throw Object.assign(new Error("denied"), { error_class: "auth" }); };
   const result = await loadCatalog({ request: denied, env, home: tempHome() });
   assert.equal(result.kinds.language.error, "auth");
   assert.equal(result.kinds.language.available, false);
+});
+
+test("a 400 'Incorrect API key' catalog response counts as auth; other usage failures do not", async () => {
+  const badKey = async () => { throw Object.assign(new Error("Incorrect API key provided. You can obtain an API key from https://console.x.ai."), { error_class: "usage" }); };
+  const result = await loadCatalog({ request: badKey, env, home: tempHome() });
+  for (const kind of Object.keys(KINDS)) assert.equal(result.kinds[kind].error, "auth", kind);
+  const other = async () => { throw Object.assign(new Error("bad request"), { error_class: "usage" }); };
+  assert.equal((await loadCatalog({ request: other, env, home: tempHome() })).kinds.language.error, "usage");
 });

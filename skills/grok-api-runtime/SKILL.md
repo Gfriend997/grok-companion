@@ -10,9 +10,9 @@ Use `node "${CLAUDE_PLUGIN_ROOT}/scripts/grok-companion.mjs" <command> [flags]`.
 | Command | Purpose |
 |---|---|
 | `ask` | Targeted Q and A; `--live` uses fresh web and X search |
-| `review`, `adversarial-review`, `rescue`, `transfer` | Explicit delegation paths |
+| `review`, `adversarial-review`, `rescue`, `transfer` | Explicit delegation paths; a bare `review` reads `git diff HEAD` (staged and unstaged tracked changes), then the last commit |
 | `imagine` | Raster image generation with up to three source images |
-| `video --seconds <1-30> [--confirm-cost]` | Persistent provider video job; without `--confirm-cost` it exits 9 with the estimate and sends nothing |
+| `video --seconds <1-30> [--confirm-cost] [--from-image <path-or-https-url>]` | Persistent provider video job; without `--confirm-cost` it exits 9 with the estimate and sends nothing. A local `--from-image` must be a JPEG or PNG and is checked before the estimate |
 | `speak (<text> | --text-file <path>)` | Billed text to MP3 speech, saved locally |
 | `transcribe --file <path>` | Billed transcript of one local MP3 or WAV; `text` and `details` are enveloped |
 | `status`, `result`, `cancel` | JSON job management for video and background text jobs |

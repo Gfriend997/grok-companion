@@ -9,7 +9,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import * as cli from "../scripts/grok-companion.mjs";
 import { createJobStore } from "../scripts/lib/jobs.mjs";
-import { harness } from "./cli.test.mjs";
+import { harness } from "./support/harness.mjs";
 
 const { main, processQueryCommand } = cli;
 const last = (run) => JSON.parse(run.lines.at(-1));

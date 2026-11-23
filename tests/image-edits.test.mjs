@@ -26,9 +26,9 @@ const PNG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0
 test("imagine with sources posts to /images/edits in the codex-plugin body shape", async () => {
   const calls = [];
   const media = createMedia({ apiClient: { requestAuthenticated: async (p, init) => { calls.push({ p, body: init.body }); return { data: [{ url: "https://imgen.x.ai/a.png" }] }; } } });
-  await media.generateImage({ prompt: "p", sources: [], model: "m" });
-  await media.generateImage({ prompt: "p", sources: ["data:image/png;base64,AA=="], model: "m" });
-  await media.generateImage({ prompt: "p", sources: ["data:a", "data:b"], model: "m" });
+  await media.generateImage({ prompt: "p", sources: [], model: "m", outDir });
+  await media.generateImage({ prompt: "p", sources: ["data:image/png;base64,AA=="], model: "m", outDir });
+  await media.generateImage({ prompt: "p", sources: ["data:a", "data:b"], model: "m", outDir });
   assert.deepEqual(calls, [
     { p: "/images/generations", body: { model: "m", prompt: "p", n: 1 } },
     { p: "/images/edits", body: { model: "m", prompt: "p", n: 1, image: { url: "data:image/png;base64,AA==" } } },
@@ -56,7 +56,7 @@ test("role routing with image input considers only models that accept images", (
   const catalog = catalogFrom(raw);
   assert.equal(models.resolveRole("strong", catalog).model, "grok-4.7");
   assert.equal(models.resolveRole("strong", catalog, { needsImageInput: true }).model, "grok-4.6");
-  assert.equal(models.resolveRole("coding", catalog, { needsImageInput: true }).model, "grok-4.6", "coding alias without image input defers to strong");
+  assert.deepEqual(models.resolveRole("coding", catalog, { needsImageInput: true }), { defer: "strong" }, "coding alias without image input defers to strong");
   const none = catalogFrom(imageOnly("language", []));
   assert.throws(() => models.resolveRole("fast", none, { needsImageInput: true }), (error) => error.error_class === "capability_unavailable" && /with image input/.test(error.message));
 });

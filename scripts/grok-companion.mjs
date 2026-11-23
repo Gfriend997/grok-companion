@@ -58,6 +58,9 @@ function setGate(value, deps) {
   return root;
 }
 
+// The diff a bare `review` and the stop-review gate both read: staged and unstaged changes to tracked files.
+export const DIFF_ARGS = Object.freeze(["diff", "HEAD", "--"]);
+
 function gatherDiff(run = runGit) {
   // Over the read limit, the output is cut: never review a partial diff or fall back to the last commit.
   const read = (args) => {
@@ -65,7 +68,7 @@ function gatherDiff(run = runGit) {
     if (r.error?.code === "ENOBUFS") throw runtimeError("usage", "diff too large to review");
     return r.status === 0 ? r.stdout : "";
   };
-  let diff = read(["diff"]);
+  let diff = read([...DIFF_ARGS]);
   if (!diff.trim()) diff = read(["diff", "HEAD~1..HEAD"]);
   if (!diff.trim()) throw runtimeError("usage", "no diff to review (working tree clean and no previous commit)");
   if (Buffer.byteLength(diff) > MAX_DIFF_BYTES) diff = diff.slice(0, MAX_DIFF_BYTES) + "\n[diff truncated at 200KB]";
@@ -142,10 +145,20 @@ function catalogContext(deps) {
 }
 
 // Precedence: --model, then the role's env pin, then the live/cached/fallback role route.
+// Coding: --model, the coding pin, the build alias target, then the strong selection (its pin applies) tagged roleFallback "strong".
 export async function selectModel(role, flags, ctx, { needsImageInput = false } = {}) {
+  const route = await selectRoute(role, flags, ctx, needsImageInput);
+  return role === "coding" && !("roleFallback" in route) ? { ...route, roleFallback: null } : route;
+}
+
+async function selectRoute(role, flags, ctx, needsImageInput) {
   const { models } = ctx;
   const explicit = flags.model ?? ctx.env?.[ROLE_ENV[role]];
-  if (!explicit) return models.resolveRole(role, await ctx.catalog(), { needsImageInput });
+  if (!explicit) {
+    const resolved = models.resolveRole(role, await ctx.catalog(), { needsImageInput });
+    if (!resolved.defer) return resolved;
+    return { ...(await selectModel(resolved.defer, {}, ctx, { needsImageInput })), roleFallback: resolved.defer };
+  }
   const routeSource = flags.model ? "flag" : "env";
   const kind = models.ROLE_KIND[role];
   let catalog = await ctx.catalog();
@@ -162,7 +175,9 @@ export async function selectModel(role, flags, ctx, { needsImageInput = false } 
   return { model: explicit, routeSource, modelVerified: true, priceChanged: models.priceChangedFor(found.entry, role) };
 }
 
-const routeMeta = ({ model, routeSource, modelVerified, priceChanged }) => ({ model, routeSource, modelVerified, priceChanged });
+// roleFallback is carried only when the route has it, so it appears on coding routes only.
+const routeMeta = ({ model, routeSource, modelVerified, priceChanged, ...rest }) =>
+  ({ model, routeSource, modelVerified, priceChanged, ...("roleFallback" in rest ? { roleFallback: rest.roleFallback } : {}) });
 
 function preflight(deps, text) {
   const result = deps.scrub.preflight(text);
@@ -181,7 +196,6 @@ function write(deps, value) {
 function attachmentContent(deps, flags) {
   if (!flags.file.length) return { content: null, tokenEstimate: 0 };
   const attached = deps.attach.toParts(flags.file);
-  if (attached.tokenEstimate >= 200_000 && !flags["allow-long-context"]) throw runtimeError("usage", "long context requires --allow-long-context");
   return { content: attached.parts, tokenEstimate: attached.tokenEstimate };
 }
 
@@ -194,6 +208,7 @@ async function prepareDelegation(command, flags, prompt, deps, route) {
   if (flags.live && flags.file.length) throw runtimeError("usage", "--live cannot be combined with --file (live search sends only the prompt); ask without --live, or paste the needed text into the prompt");
   preflight(deps, prompt);
   const attachment = attachmentContent(deps, flags);
+  if (attachment.tokenEstimate + Math.ceil(prompt.length / 4) >= 200_000 && !flags["allow-long-context"]) throw runtimeError("usage", "long context requires --allow-long-context");
   const needsImageInput = (attachment.content ?? []).some((part) => part?.type === "image_url");
   const routing = route ?? await selectModel(roleFor(command, flags), flags, deps.ctx, { needsImageInput });
   return { command, flags, prompt, attachment, routing };
@@ -211,7 +226,7 @@ async function sendDelegation({ command, flags, prompt, attachment, routing }, d
     });
     const citations = response.citations.slice(0, flags["max-sources"] ?? response.citations.length);
     // Citation fields print outside the envelope, so one line each: no injected `Route:` or envelope lines.
-    const oneLine = (text) => neutralize(text).replace(/[\r\n\u2028\u2029]+/g, " ");
+    const oneLine = (text) => neutralize(text).replace(/[\r\n\v\f\u001c-\u001e\u0085\u{2028}\u{2029}]+/gu, " ");
     return `${envelope(response.content)}\nSources:\n${citations.map((item) => `- ${oneLine(item.title)}: ${oneLine(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}\nRoute: ${JSON.stringify(routeMeta(routing))}`;
   }
   const message = attachment.content ? [...attachment.content, ...(prompt ? [{ type: "text", text: prompt }] : [])] : prompt;
@@ -240,11 +255,23 @@ function spawnWorker(id) {
   return child.pid;
 }
 
+// A busy job lock is a local file: try the write again once per second for up to 60 seconds. Nothing is re-sent.
+async function retryBusy(writeJob, deps) {
+  for (let attempt = 0; ; attempt += 1) {
+    try { return writeJob(); } catch (error) {
+      if (attempt >= 60 || !String(error?.message).startsWith("job is busy")) throw error;
+      await deps.sleep(1000);
+    }
+  }
+}
+
 // Single use: only the first worker to claim a created text job runs it, so a job sends at most one request. Never retried.
 async function backgroundWorker(id, deps) {
   const job = deps.jobs.getJob(id);
   if (job?.kind !== "text" || job.state !== "created" || !deps.jobs.claimJob(id)) return;
-  deps.jobs.updateJob(id, { state: "running", pid: process.pid });
+  // A cancel between the claim and this write leaves the job abandoned: then nothing is sent.
+  const started = await retryBusy(() => deps.jobs.updateJob(id, { state: "running", pid: process.pid }, { expectedState: "created" }), deps);
+  if (started?.state !== "running") return;
   let patch;
   try {
     let prepared;
@@ -261,7 +288,21 @@ async function backgroundWorker(id, deps) {
   } catch (error) {
     patch = { state: "failed", error: { error_class: EXIT_CODES[error?.error_class] ? error.error_class : "usage", message: String(error?.message ?? "runtime error"), retryable: false } };
   }
-  if (deps.jobs.getJob(id)?.state !== "abandoned") deps.jobs.updateJob(id, patch);
+  // A paid answer is never dropped: if the last write fails for any reason, it goes to the answer file that status and result apply.
+  try { await retryBusy(() => deps.jobs.updateJob(id, patch, { expectedState: "running" }), deps); } catch (error) {
+    if (error?.message === "job not found") throw error;
+    deps.jobs.saveAnswer(id, patch);
+  }
+}
+
+// Applies a worker's answer file to a running text job; a still-busy lock merges it in memory only.
+function applyAnswer(deps, job) {
+  const patch = job?.kind === "text" && job.state === "running" ? deps.jobs.readAnswer(job.id) : null;
+  if (!patch) return job;
+  try { return deps.jobs.updateJob(job.id, patch, { expectedState: "running" }); } catch (error) {
+    if (!String(error?.message).startsWith("job is busy")) throw error;
+    return { ...job, ...patch };
+  }
 }
 
 // The 300-second request timeout plus a margin.
@@ -269,7 +310,8 @@ const STALE_TEXT_MS = 6 * 60 * 1000;
 const UNCLAIMED_TEXT_MS = 60 * 1000;
 const UNKNOWN = { state: "submission_unknown", note: "the worker stopped reporting; the request may have been billed and is never re-sent" };
 // A created job with no claim file was never picked up by a worker, so nothing was sent.
-const staleText = (deps) => (job) => {
+const staleText = (deps) => (stored) => {
+  const job = applyAnswer(deps, stored);
   if (job?.kind !== "text") return job;
   const age = Date.now() - Date.parse(job.createdAt);
   if (job.state === "created" && age > UNCLAIMED_TEXT_MS) {
@@ -305,7 +347,7 @@ async function cancelCommand(id, deps) {
       try { deps.killProcess(job.pid); } catch (error) { if (error?.code !== "ESRCH") cancellation = "local-abandon"; }
     }
   }
-  const updated = deps.jobs.updateJob(id, { state: "abandoned", cancellation });
+  const updated = deps.jobs.updateJob(id, { state: "abandoned", cancellation }, { unlessTerminal: true });
   const note = cancellation === "confirmed" ? "the worker was stopped; the request may still be billed" : "the worker was not stopped and may run for up to 5 minutes; the request may still be billed";
   return { ...updated, note };
 }
@@ -315,29 +357,44 @@ async function commandVideo(flags, prompt, deps) {
   const seconds = Number(flags.seconds);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw runtimeError("usage", "--seconds must be an integer from 1 to 30");
   preflight(deps, prompt);
+  // Checked before the cost gate (D2), so a bad image never asks for an approval it cannot use.
+  let fromImage = flags["from-image"];
+  if (/^https:\/\//i.test(fromImage ?? "")) preflight(deps, fromImage);
+  else if (/^[a-z][a-z0-9+.-]+:\/\//i.test(fromImage ?? "")) throw runtimeError("usage", "--from-image takes a local JPEG or PNG path or an https:// URL");
+  else if (fromImage !== undefined) {
+    const parts = deps.attach.toParts([fromImage]).parts;
+    if (parts.length !== 1 || parts[0].type !== "image_url") throw runtimeError("usage", "--from-image requires a JPEG or PNG image");
+    fromImage = parts[0].image_url.url;
+  }
   const total = (seconds * 0.08).toFixed(2);
   if (!flags["confirm-cost"]) throw runtimeError("usage", `video requires --confirm-cost after user approval. Estimate: ${seconds} × $0.08 = $${total} (starting rate, unverified; the price varies by model and resolution). Nothing was sent.`);
-  const route = routeMeta(await selectModel("video", flags, deps.ctx, { needsImageInput: Boolean(flags["from-image"]) }));
+  const route = routeMeta(await selectModel("video", flags, deps.ctx, { needsImageInput: Boolean(fromImage) }));
   write(deps, `${seconds} × $0.08 = $${total} (unverified estimate; actual price depends on model ${route.model})`);
   const id = deps.jobs.createJob({ kind: "video", request: { prompt, seconds, ...route } });
+  let created;
   try {
-    const created = await deps.media.createVideoJob({ prompt, seconds, fromImage: flags["from-image"], model: route.model });
-    deps.jobs.recordSubmission(id, created.providerJobId);
-    if (flags.wait) {
-      const provider = await deps.jobs.pollWithBackoff(() => deps.media.pollVideo(created.providerJobId));
-      const job = await deps.jobs.refresh(id, async () => provider);
-      if (job.state === "done" && job.result?.url) {
-        const artifact = await deps.media.downloadArtifact(job.result.url, undefined, { out: flags.out });
-        write(deps, { ...job, ...route, result: { ...job.result, artifactPath: artifact.path } });
-        return;
-      }
-      write(deps, { ...job, ...route });
-      return;
-    }
-    write(deps, { id, state: "submitted", providerJobId: created.providerJobId, ...route });
+    created = await deps.media.createVideoJob({ prompt, seconds, fromImage, model: route.model });
   } catch (error) {
     deps.jobs.recordSubmission(id, "submission_unknown");
     throw error;
+  }
+  // From here the provider id is stored: a later failure keeps it, so status and result can still fetch the video.
+  try { deps.jobs.recordSubmission(id, created.providerJobId); } catch (error) {
+    throw runtimeError(error?.error_class ?? "usage", `${error?.message ?? error}; xAI accepted the job as provider id ${created.providerJobId}, which is billed but not stored in job ${id}`);
+  }
+  // Printed before any polling, so a later failure never hides the job id.
+  write(deps, { id, state: "submitted", providerJobId: created.providerJobId, ...route });
+  if (flags.wait) {
+    const provider = await deps.jobs.pollWithBackoff(() => deps.media.pollVideo(created.providerJobId));
+    const job = await deps.jobs.refresh(id, async () => provider);
+    if (job.state === "done" && job.result?.url) {
+      const artifact = await deps.media.downloadArtifact(job.result.url, undefined, { out: flags.out });
+      const result = { ...job.result, artifactPath: artifact.path };
+      deps.jobs.updateJob(id, { result });
+      write(deps, { ...job, ...route, result });
+      return;
+    }
+    write(deps, { ...job, ...route });
   }
 }
 
@@ -357,7 +414,7 @@ async function commandImagine(flags, prompt, deps) {
   if (sourceParts.length > 3) throw runtimeError("usage", "image generation accepts at most 3 sources");
   const sources = sourceParts.map((part) => part.image_url.url);
   const route = routeMeta(await selectModel("image", flags, deps.ctx, { needsImageInput: sources.length > 0 }));
-  const result = await deps.media.generateImage({ prompt, sources, model: route.model });
+  const result = await deps.media.generateImage({ prompt, sources, model: route.model, out: flags.out });
   const saved = result.url ? await deps.media.downloadArtifact(result.url, undefined, { out: flags.out }) : deps.media.saveBase64(result.b64, { out: flags.out });
   write(deps, { ...saved, ...route });
 }
@@ -440,7 +497,7 @@ export async function main(argv, suppliedDeps = {}) {
   const deps = {
     api: apiRuntime, media: mediaRuntime, jobs: jobsRuntime, scrub: scrubRuntime, attach: attachRuntime, models: modelsRuntime,
     env: process.env, home: companionHome(), stdout: process.stdout,
-    spawnWorker, processQuery: queryProcess, killProcess: (pid) => process.kill(pid), repoRoot: () => repoRoot(), git: runGit, ...suppliedDeps
+    spawnWorker, processQuery: queryProcess, sleep: (ms) => new Promise((done) => setTimeout(done, ms)), killProcess: (pid) => process.kill(pid), repoRoot: () => repoRoot(), git: runGit, ...suppliedDeps
   };
   deps.ctx = { models: deps.models, env: deps.env, catalog: catalogContext(deps) };
   try {
@@ -470,6 +527,8 @@ export async function main(argv, suppliedDeps = {}) {
       if (job.state === "done" && job.result?.url && !job.result.artifactPath) {
         const artifact = await deps.media.downloadArtifact(job.result.url, undefined, { out: flags.out });
         job = { ...job, result: { ...job.result, artifactPath: artifact.path } };
+        // Stored once: later calls print this path and never download again, even if the file moved (D4).
+        deps.jobs.updateJob(job.id, { result: job.result });
       }
       write(deps, job);
     } else if (command === "cancel") {
@@ -487,7 +546,7 @@ export async function main(argv, suppliedDeps = {}) {
       }
       const catalog = await deps.ctx.catalog({ fresh: true });
       const kinds = Object.values(catalog.kinds);
-      if (kinds.some((state) => state.error === "auth")) throw runtimeError("auth", "xAI rejected the API key (catalog request returned 401/403)");
+      if (kinds.some((state) => state.error === "auth")) throw runtimeError("auth", "xAI rejected the API key (catalog request returned 400, 401 or 403)");
       const models = kinds.flatMap((state) => state.entries.map(({ id, kind, aliases, inputModalities, outputModalities, prices }) => ({ id, kind, aliases, inputModalities, outputModalities, prices })));
       const routes = {};
       for (const role of Object.keys(deps.models.ROLE_KIND)) {
