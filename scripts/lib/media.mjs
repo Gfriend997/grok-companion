@@ -239,29 +239,55 @@ export function createMedia({ apiClient = { requestAuthenticated: defaultRequest
     return { state, progress: raw?.progress ?? null, url: raw?.video?.url ?? null, usageTicks: raw?.usage?.cost_in_usd_ticks ?? null };
   }
 
-  async function downloadArtifact(url, outDir = DEFAULT_MEDIA_DIR, { out, maxBytes = MAX_ARTIFACT_BYTES } = {}) {
+  async function downloadArtifact(url, outDir = DEFAULT_MEDIA_DIR, { out, maxBytes = MAX_ARTIFACT_BYTES, timeoutMs = 300_000 } = {}) {
     let current = allowed(url);
-    for (let redirects = 0; redirects < 4; redirects += 1) {
-      const response = await fetchImpl(current, { method: "GET", redirect: "manual", headers: {} });
-      if (response.status >= 300 && response.status < 400) {
-        const location = response.headers.get("location");
-        if (!location) throw usage("artifact redirect has no location");
-        current = allowed(new URL(location, current).toString());
-        continue;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // A body that stalls after its first bytes must also end at the timeout, whatever the fetch does with the signal.
+    const timedOut = new Promise((_resolve, reject) => controller.signal.addEventListener("abort", () => reject(usage("artifact download timed out")), { once: true }));
+    timedOut.catch(() => {});
+    try {
+      for (let redirects = 0; redirects < 4; redirects += 1) {
+        const response = await fetchImpl(current, { method: "GET", redirect: "manual", headers: {}, signal: controller.signal });
+        if (response.status >= 300 && response.status < 400) {
+          const location = response.headers.get("location");
+          if (!location) throw usage("artifact redirect has no location");
+          current = allowed(new URL(location, current).toString());
+          await response.body?.cancel().catch(() => {});
+          continue;
+        }
+        if (!response.ok) throw usage(`artifact download failed with ${response.status}`);
+        const declared = Number(response.headers.get("content-length"));
+        if (Number.isFinite(declared) && declared > maxBytes) throw usage("artifact is too large");
+        if (!response.body) throw usage("artifact has no response body");
+        const reader = response.body.getReader();
+        const chunks = [];
+        let total = 0;
+        try {
+          for (;;) {
+            const { done, value } = await Promise.race([reader.read(), timedOut]);
+            if (done) break;
+            total += value.byteLength;
+            if (total > maxBytes) throw usage("artifact is too large");
+            chunks.push(value);
+          }
+        } catch (error) {
+          await reader.cancel().catch(() => {});
+          throw error;
+        } finally { reader.releaseLock(); }
+        const bytes = Buffer.concat(chunks, total);
+        // The artifact is billed: a bad --out or URL name falls back to grok-artifact instead of failing.
+        let stem;
+        try { stem = outputStem(out, path.parse(current.pathname).name || "grok-artifact"); } catch { stem = "grok-artifact"; }
+        return saveBytes(bytes, sniff(bytes), { outDir, stem });
       }
-      if (!response.ok) throw usage(`artifact download failed with ${response.status}`);
-      const declared = Number(response.headers.get("content-length"));
-      if (Number.isFinite(declared) && declared > maxBytes) throw usage("artifact is too large");
-      const bytes = Buffer.from(await response.arrayBuffer());
-      if (bytes.length > maxBytes) throw usage("artifact is too large");
-      const type = sniff(bytes);
-      fs.mkdirSync(outDir, { recursive: true });
-      const requested = out ? path.parse(path.basename(out)).name : path.parse(current.pathname).name || "grok-artifact";
-      const target = unusedPath(outDir, requested || "grok-artifact", type.extension);
-      fs.writeFileSync(target, bytes, { mode: 0o600 });
-      return { path: target, mime: type.mime, bytes: bytes.length };
+      throw usage("too many artifact redirects");
+    } catch (error) {
+      if (controller.signal.aborted) throw usage("artifact download timed out");
+      throw error;
+    } finally {
+      clearTimeout(timer);
     }
-    throw usage("too many artifact redirects");
   }
   return { generateImage, createVideoJob, pollVideo, downloadArtifact, saveBase64, synthesizeSpeech, transcribeAudio };
 }

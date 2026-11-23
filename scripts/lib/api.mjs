@@ -119,8 +119,8 @@ export function createApiClient({ fetchImpl = globalThis.fetch, env = process.en
     return parseContent(body);
   }
 
-  async function respond({ model, input, tools, signal }) {
-    const body = await requestAuthenticated("/responses", { method: "POST", signal, body: { model, input, tools } });
+  async function respond({ model, input, tools, maxTokens, signal }) {
+    const body = await requestAuthenticated("/responses", { method: "POST", signal, body: { model, input, tools, ...(maxTokens ? { max_output_tokens: maxTokens } : {}) } });
     return parseResponse(body);
   }
 

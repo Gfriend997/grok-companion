@@ -1,5 +1,5 @@
 ---
-description: Read a Grok video job result
+description: Read a Grok job result
 argument-hint: "--id <job-id>"
 allowed-tools: Bash(node:*)
 ---

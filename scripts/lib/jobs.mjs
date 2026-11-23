@@ -83,6 +83,13 @@ export function createJobStore({ dir = path.join(os.homedir(), ".grok-companion"
     }
   }
 
+  // One worker per job: the claim file is created with wx, so only the first claim succeeds.
+  const claimFile = (id) => path.join(dir, `${safeId(id)}.claim`);
+  function claimJob(id) {
+    try { fs.writeFileSync(claimFile(id), "", { flag: "wx", mode: 0o600 }); return true; } catch (error) { if (error?.code === "EEXIST") return false; throw error; }
+  }
+  const isClaimed = (id) => fs.existsSync(claimFile(id));
+
   function listJobs() {
     return fs.readdirSync(dir).filter((name) => name.endsWith(".json")).map((name) => JSON.parse(fs.readFileSync(path.join(dir, name), "utf8"))).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   }
@@ -108,7 +115,7 @@ export function createJobStore({ dir = path.join(os.homedir(), ".grok-companion"
     }
     return removed;
   }
-  return { dir, createJob, recordSubmission, refresh, listJobs, getJob: read, cancelJob, gc };
+  return { dir, createJob, recordSubmission, refresh, listJobs, getJob: read, updateJob: update, claimJob, isClaimed, cancelJob, gc };
 }
 
 let defaultStore;
@@ -121,5 +128,8 @@ export const recordSubmission = (...args) => productionStore().recordSubmission(
 export const refresh = (...args) => productionStore().refresh(...args);
 export const listJobs = (...args) => productionStore().listJobs(...args);
 export const getJob = (...args) => productionStore().getJob(...args);
+export const updateJob = (...args) => productionStore().updateJob(...args);
+export const claimJob = (...args) => productionStore().claimJob(...args);
+export const isClaimed = (...args) => productionStore().isClaimed(...args);
 export const cancelJob = (...args) => productionStore().cancelJob(...args);
 export const gc = (...args) => productionStore().gc(...args);

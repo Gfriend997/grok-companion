@@ -18,11 +18,15 @@ function newHome() { const dir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-cli
 
 // catalog: undefined = no requestAuthenticated (discovery fails -> fallback routes); "fixture" = live 2026-11-21 catalog; "fail" = catalog requests throw.
 // models: the GET /models body served alongside the catalog, or "fail".
-export function harness(overrides = {}, { catalog, home = newHome(), env = {}, models = modelsFixture } = {}) {
+// repo: what repoRoot returns; commandLine: what the process query returns for any pid.
+export function harness(overrides = {}, { catalog, home = newHome(), env = {}, models = modelsFixture, repo = null, commandLine = "" } = {}) {
   const lines = [];
   const calls = [];
   const catalogCalls = [];
   const jobsCreated = [];
+  const workers = [];
+  const queries = [];
+  const kills = [];
   const api = {
     chat: async (request) => { calls.push(request); return { content: "answer", usage: { total_tokens: 3 } }; },
     respond: async (request) => { calls.push(request); return { content: "fresh", citations: [{ url: "https://example.test", title: "Example" }], usage: { num_sources_used: 1 } }; }
@@ -49,11 +53,15 @@ export function harness(overrides = {}, { catalog, home = newHome(), env = {}, m
       transcribeAudio: async (request) => { calls.push(request); return { text: "Hello", untrusted: true }; }
     },
     jobs: {
-      createJob: (job) => { jobsCreated.push(job); return "local-1"; }, recordSubmission: () => {}, refresh: async () => ({ state: "done" }), listJobs: () => [], getJob: () => ({ id: "local-1", state: "done" }), cancelJob: async () => ({ id: "local-1", state: "abandoned" })
+      createJob: (job) => { jobsCreated.push(job); return "local-1"; }, recordSubmission: () => {}, pollWithBackoff: async (poll) => poll(), refresh: async () => ({ state: "done" }), listJobs: () => [], getJob: () => ({ id: "local-1", state: "done" }), cancelJob: async () => ({ id: "local-1", state: "abandoned" }), updateJob: (id, patch) => ({ id, ...patch })
     },
+    spawnWorker: (id) => { workers.push(id); return 4242; },
+    repoRoot: () => repo,
+    processQuery: async (pid) => { queries.push(pid); return commandLine; },
+    killProcess: (pid) => { kills.push(pid); },
     ...overrides
   };
-  return { deps, lines, calls, catalogCalls, jobsCreated, home };
+  return { deps, lines, calls, catalogCalls, jobsCreated, home, workers, queries, kills };
 }
 const last = (run) => JSON.parse(run.lines.at(-1));
 
@@ -152,7 +160,7 @@ test("imagine and video carry route metadata; video stores it on the job", async
   assert.equal(image.calls[0].model, "grok-imagine-image-2.0");
   assert.deepEqual(last(image), { path: "saved.png", mime: "image/png", bytes: 1, model: "grok-imagine-image-2.0", routeSource: "live", modelVerified: true, priceChanged: false });
   const video = harness({}, { catalog: "fixture" });
-  assert.equal(await main(["video", "apple", "--seconds", "2"], video.deps), 0);
+  assert.equal(await main(["video", "apple", "--seconds", "2", "--confirm-cost"], video.deps), 0);
   assert.match(video.lines[0], /^2 × \$0\.08 = \$0\.16 \(unverified estimate; actual price depends on model grok-imagine-video-1\.5\)$/);
   assert.equal(video.calls[0].model, "grok-imagine-video-1.5");
   assert.equal(video.jobsCreated[0].request.model, "grok-imagine-video-1.5");
@@ -233,7 +241,7 @@ test("wrong-kind env pins are rejected and media pins are honored", async () => 
   assert.equal(image.calls[0].model, "grok-imagine-image");
   assert.equal(last(image).priceChanged, true);
   const video = harness({}, { catalog: "fixture", env: { GROK_COMPANION_MODEL_VIDEO: "grok-imagine-video-1.5-lite" } });
-  assert.equal(await main(["video", "apple", "--seconds", "1"], video.deps), 0);
+  assert.equal(await main(["video", "apple", "--seconds", "1", "--confirm-cost"], video.deps), 0);
   assert.equal(video.calls[0].model, "grok-imagine-video-1.5-lite");
 });
 

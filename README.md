@@ -110,22 +110,26 @@ the [Codex verification report](docs/CODEX_REPORT.md) for commands and limits.
 
 | Command | What it does |
 |---|---|
-| `/grok-companion:setup` | Check key presence + API reachability + live model catalog and resolved routes; `--gate on\|off` toggles the stop-review gate |
+| `/grok-companion:setup` | Check key presence + API reachability + live model catalog and resolved routes; `--gate on\|off` turns the stop-review gate on or off for the current repository only |
 | `/grok-companion:ask` | One question; `--file` (repeatable) attaches text/jpg/png; `--live` enables Live Search + X Search |
 | `/grok-companion:review` | Grok reviews your current diff (falls back to last commit) |
 | `/grok-companion:adversarial-review` | Hostile review pass hunting for breakage |
 | `/grok-companion:rescue` | Delegate a task; Grok returns a plan and diffs for Claude to apply |
 | `/grok-companion:imagine` | Generate or edit an image; `--source` (≤3, repeatable) sends an edit to `/images/edits`. Results are saved locally, including base64 results |
-| `/grok-companion:video` | Generate a video; `--seconds` required, `--from-image` for image-to-video; background job by default, `--wait` for foreground |
+| `/grok-companion:video` | Generate a video; `--seconds` required, `--from-image` for image-to-video; refused with a cost estimate until `--confirm-cost` is added after the user approves; background job by default, `--wait` for foreground |
 | `/grok-companion:speak` | Billed text to MP3 speech; `--text-file` for long text, `--voice`, `--language`, `--out`. Saved locally |
 | `/grok-companion:transcribe` | Billed transcript of one local MP3 or WAV (`--file`); `--language`, `--model`. Output is enveloped as untrusted |
-| `/grok-companion:status` | List background jobs (`--id` for one), JSON output |
-| `/grok-companion:result` | Fetch a finished job's output / download its artifact |
-| `/grok-companion:cancel` | Cancel a job (locally abandoned if xAI has no server-side cancel) |
+| `/grok-companion:status` | List video jobs and background text jobs (`--id` for one), JSON output |
+| `/grok-companion:result` | Fetch a finished job's output (a background text job prints its foreground output) / download a video artifact |
+| `/grok-companion:cancel` | Cancel a job: a background text worker is stopped only when its process is verified, otherwise abandoned locally; video jobs are abandoned locally. The request may still be billed |
 | `/grok-companion:transfer` | Summarize the current session into a Grok task (context handoff) |
 
-Common flags: `--model` (overrides automatic selection), `--max-tokens`, `--max-sources`
-(Live Search cap), `--allow-long-context`, `--background`, `--out`.
+Common flags: `--model` (overrides automatic selection), `--max-tokens` (an output cap from 1 to
+131072 on the text commands; no default, so nothing is sent without it), `--max-sources`
+(Live Search cap), `--allow-long-context`, `--background` (the five text commands only: returns a
+job id at once and runs the one request in a detached worker), `--out`. Each command accepts only
+its own flags: an unknown or misplaced flag exits 9 before any request. A bare `--` ends flag
+parsing, so a prompt word that starts with `--` goes after it.
 
 ## Models — selected per job, not fixed
 
@@ -161,7 +165,29 @@ wins over a pin. `--build-unavailable` is accepted but no longer needed.
 
 ## Cost guards
 
-- `video` requires an explicit `--seconds` (capped) and prints the dollar cost before dispatch.
+- `video` requires an explicit `--seconds` (capped) and `--confirm-cost`. Without the flag it exits 9
+  with the estimate (`<seconds> × $0.08`, a starting rate measured on 2026-08-13 for one model; the
+  real price varies by model and resolution) and sends nothing. Add the flag only after the user
+  approves; the run then prints the cost line before dispatch.
+- `--max-tokens` caps billed output tokens only when it is given. There is no default limit, and
+  a cut answer is not marked.
+- A `--background` run costs the same as a foreground one: one request. It is billed even if the
+  job is cancelled or the worker dies, and it is never re-sent. A `running` text job older than
+  6 minutes is reported as `submission_unknown`.
+- The stop-review gate is off by default and set per repository (`setup --gate on`). At stop it
+  reviews only a large or risky `git diff` (unstaged tracked changes), at most once per distinct
+  diff and once per stop sequence. A routine diff costs nothing and prints nothing. A diff is risky
+  when it has 400 or more changed lines, or when a changed path word starts with, or a changed
+  line matches, one of these:
+
+  | Category | Path word stems and files | Changed-line words |
+  |---|---|---|
+  | auth | auth, login, signin, oauth, sso, session, jwt, password, passwd, permission, rbac, acl | password, authenticat, authoriz, jwt, oauth, bcrypt, argon2, set-cookie |
+  | secrets | secret, credential, token, apikey, keystore, vault; `.env*`, `*.pem`, `*.key`, `*.pfx` | secret, api key, private key, access token, credential |
+  | data | database, db, storage, backup, delete, purge | drop table/database/column/schema, truncate, delete from, rm -rf, rmSync, unlink, Remove-Item, deleteMany, destroy_all |
+  | money | payment, billing, invoice, checkout, stripe, paypal, pricing, refund, subscription, ledger, payout | payment, invoice, refund, stripe, paypal, billing, payout |
+  | migration | migration, migrate, schema, prisma, alembic; `*.sql` | create/alter table, add column, migration |
+  | security | security, crypto, encrypt, decrypt, cors, csrf, firewall, rls, sanitize | encrypt, decrypt, csrf, cors, sanitiz, eval(, child_process, rejectUnauthorized, verify=false, --no-verify, row level security, icacls, chmod |
 - Requests estimated at ≥200K tokens are refused without `--allow-long-context` — xAI bills
   the *entire* request at roughly double above that threshold.
 - `--live` responses report the API's own usage fields (sources used, tool calls, cost);
@@ -246,7 +272,7 @@ are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` 
 | `XAI_API_KEY not set` | The variable was set after Claude Code started. Restart Claude Code — child processes inherit the environment at launch. |
 | `410` mentioning Live Search | You are on an old fork sending `search_parameters`; current builds use the Agent Tools API on `/v1/responses`. Update the plugin. |
 | Request refused with a long-context message | Estimated ≥200K tokens; xAI bills the whole request at ~2x above that line. Trim attachments or pass `--allow-long-context` deliberately. |
-| `video` refuses to run | `--seconds` is required and capped; the cost line prints before dispatch. |
+| `video` refuses to run | `--seconds` is required and capped. Without `--confirm-cost` it exits 9 with the estimate and sends nothing: ask the user, then add the flag. |
 | Artifact download refused | The URL's host is outside the allowlist (`imgen.x.ai`, `vidgen.x.ai`). That is the security model working, not a bug. |
 | Slash commands missing after install | Marketplace changes need a session restart. |
 
@@ -262,9 +288,12 @@ are billed): `setup`, `ask`, `ask --live`, `review`, `imagine`, a short `video` 
 ## Routing policy
 
 A `SessionStart` hook injects the routing policy into Claude's context each session:
-real-time questions and video generation route here (video confirms cost first), raster
-image generation routes here **by default** (Gemini demoted to fallback), understanding of
-media stays with Kimi, routine diff reviews stay with Gemini. If `XAI_API_KEY` is missing,
+real-time questions and video generation route here (video needs the user's cost approval
+through `--confirm-cost`), raster image generation routes here **by default** (Gemini demoted
+to fallback), and understanding of media stays with Kimi. Grok review runs only when the user
+asks, or at stop for a large or risky diff in a repository where the user turned the
+stop-review gate on. Routine diffs go to the host's own reviewer; a Gemini second opinion is
+for large or risky diffs only. If `XAI_API_KEY` is missing,
 the hook emits a degraded policy that hands image generation back to Gemini.
 
 ## Architecture
@@ -275,8 +304,8 @@ engine: build messages (preset + prompt + attachments) → one REST call → pri
 binary responses; one attempt per request), `attach.mjs` (files → content parts, EXIF
 strip), `media.mjs` (image, video and speech generation, transcription with audio checks,
 unauthenticated artifact downloads),
-`jobs.mjs` (provider-job state machine for async video), `scrub.mjs` (masking + outbound
-preflight). Design and verification history: `docs/specs/`, `docs/PROBE_REPORT.md`.
+`jobs.mjs` (job store for async video and background text jobs), `risk.mjs` (the
+stop-review gate's risky-diff rule), `scrub.mjs` (masking + outbound preflight). Design and verification history: `docs/specs/`, `docs/PROBE_REPORT.md`.
 
 ## Credits
 
@@ -301,4 +330,14 @@ endorsed by OpenAI or xAI.
 - Text commands no longer retry a transient 5xx or network error; re-run the command.
 - No server-side video cancel found on the API; `cancel` marks such jobs locally abandoned.
 - `transfer` is a context-handoff summary, not a session import.
-- The stop-review gate ships disabled and never blocks on its own failure.
+- The stop-review gate ships disabled and never blocks on its own failure. When on, it sends
+  every large or risky diff of that repository to xAI; the preflight rejects secret-shaped
+  content but cannot tell whether code is confidential, so never turn it on in a
+  client-confidential repository. The risky-diff rule is a word list: `tokenizer`, `author`
+  or a README that mentions "payment" bill a review, while risky logic in a neutrally named
+  file, staged-only changes and untracked files get none. A failed or timed-out review is not
+  retried for that diff, and the gate blocks only one stop per stop sequence.
+- A background job's worker can be stopped only when its process command line can be read
+  (PowerShell on Windows, `ps` elsewhere); otherwise `cancel` abandons the job locally and the
+  worker ends by itself within about 5 minutes. The job record keeps the prompt, file paths and
+  answer under `~/.grok-companion/jobs` until deleted.
