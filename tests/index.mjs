@@ -1,6 +1,8 @@
 import "./api.test.mjs";
 import "./attach.test.mjs";
+import "./background-gate.test.mjs";
 import "./cli.test.mjs";
+import "./cost-gate-max-tokens.test.mjs";
 import "./image-edits.test.mjs";
 import "./jobs.test.mjs";
 import "./media.test.mjs";

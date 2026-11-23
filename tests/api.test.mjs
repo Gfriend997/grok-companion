@@ -153,3 +153,19 @@ test("review fix: a POST body read that fails or times out is network, not retry
   const big = createApiClient({ env, fetchImpl: async () => new Response("x".repeat(20), { status: 200 }) });
   await assert.rejects(() => big.requestAuthenticated("/tts", { method: "POST", body: {}, responseType: "bytes", maxBytes: 5 }), (error) => error.retryable === false && /too large; submission may already have been accepted/.test(error.message));
 });
+
+test("chat sends max_tokens and respond sends max_output_tokens only when maxTokens is given", async () => {
+  const bodies = [];
+  const api = createApiClient({ env, fetchImpl: async (url, init) => {
+    bodies.push(JSON.parse(init.body));
+    return ok(url.endsWith("/responses") ? { output: [{ type: "message", content: [{ type: "output_text", text: "fresh" }] }] } : { choices: [{ message: { content: "pong" } }] });
+  } });
+  await api.chat({ model: "m", messages: [], maxTokens: 10 });
+  await api.respond({ model: "m", input: [], tools: [], maxTokens: 20 });
+  await api.chat({ model: "m", messages: [] });
+  await api.respond({ model: "m", input: [], tools: [] });
+  assert.equal(bodies[0].max_tokens, 10);
+  assert.equal(bodies[1].max_output_tokens, 20);
+  assert.ok(!("max_tokens" in bodies[2]) && !("max_output_tokens" in bodies[3]));
+  assert.ok(!("max_output_tokens" in bodies[0]) && !("max_tokens" in bodies[1]));
+});

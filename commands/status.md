@@ -1,5 +1,5 @@
 ---
-description: List Grok video jobs or inspect one
+description: List Grok jobs or inspect one
 argument-hint: "[--id <job-id>]"
 allowed-tools: Bash(node:*)
 ---

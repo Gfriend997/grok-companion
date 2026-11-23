@@ -6,10 +6,11 @@ import * as scrubRuntime from "./lib/scrub.mjs";
 import * as attachRuntime from "./lib/attach.mjs";
 import * as modelsRuntime from "./lib/models.mjs";
 import { pathToFileURL, fileURLToPath } from "node:url";
-import { readFileSync, existsSync, realpathSync, statSync } from "node:fs";
+import { readFileSync, existsSync, realpathSync, statSync, mkdirSync, writeFileSync, renameSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import { join, dirname, resolve } from "node:path";
-import { spawnSync } from "node:child_process";
+import { join, dirname, resolve, win32 } from "node:path";
+import { spawn, spawnSync } from "node:child_process";
 
 const PROMPTS_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", "prompts");
 const MAX_DIFF_BYTES = 200 * 1024;
@@ -19,14 +20,53 @@ function loadPreset(command) {
   return existsSync(file) ? readFileSync(file, "utf8").trim() : null;
 }
 
-function gatherDiff() {
-  const run = (args) => spawnSync("git", args, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
-  let r = run(["diff"]);
-  let diff = r.status === 0 ? r.stdout : "";
-  if (!diff.trim()) {
-    r = run(["diff", "HEAD~1..HEAD"]);
-    diff = r.status === 0 ? r.stdout : "";
-  }
+export const runGit = (args) => spawnSync("git", args, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024, windowsHide: true });
+
+// The real path of the current repository's root, or null outside a repository.
+export function repoRoot(git = runGit) {
+  const result = git(["rev-parse", "--show-toplevel"]);
+  if (result.status !== 0 || !result.stdout?.trim()) return null;
+  try { return realpathSync.native(result.stdout.trim()); } catch { return null; }
+}
+
+export const companionHome = () => process.env.GROK_COMPANION_HOME || homedir();
+const configFile = (home) => join(home, ".grok-companion", "config.json");
+
+export function readConfig(home) {
+  try {
+    const config = JSON.parse(readFileSync(configFile(home), "utf8"));
+    return config && typeof config === "object" && !Array.isArray(config) ? config : {};
+  } catch { return {}; }
+}
+
+// Holds only gateRepos and gateLastDiff, never the key.
+export function writeConfig(home, config) {
+  const file = configFile(home);
+  mkdirSync(dirname(file), { recursive: true });
+  const temporary = `${file}.${randomUUID()}.tmp`;
+  writeFileSync(temporary, JSON.stringify(config, null, 2), { encoding: "utf8", mode: 0o600 });
+  renameSync(temporary, file);
+}
+
+function setGate(value, deps) {
+  if (!["on", "off"].includes(value)) throw runtimeError("usage", "--gate must be on or off");
+  const root = deps.repoRoot();
+  if (!root) throw runtimeError("usage", "setup --gate must run inside a git repository; the gate is set per repository");
+  const config = readConfig(deps.home);
+  const others = (Array.isArray(config.gateRepos) ? config.gateRepos : []).filter((repo) => repo !== root);
+  writeConfig(deps.home, { ...config, gateRepos: value === "on" ? [...others, root] : others });
+  return root;
+}
+
+function gatherDiff(run = runGit) {
+  // Over the read limit, the output is cut: never review a partial diff or fall back to the last commit.
+  const read = (args) => {
+    const r = run(args);
+    if (r.error?.code === "ENOBUFS") throw runtimeError("usage", "diff too large to review");
+    return r.status === 0 ? r.stdout : "";
+  };
+  let diff = read(["diff"]);
+  if (!diff.trim()) diff = read(["diff", "HEAD~1..HEAD"]);
   if (!diff.trim()) throw runtimeError("usage", "no diff to review (working tree clean and no previous commit)");
   if (Buffer.byteLength(diff) > MAX_DIFF_BYTES) diff = diff.slice(0, MAX_DIFF_BYTES) + "\n[diff truncated at 200KB]";
   return diff;
@@ -39,19 +79,43 @@ function runtimeError(error_class, message, retryable = false) {
   return Object.assign(new Error(message), { error_class, retryable });
 }
 
+const TEXT_COMMANDS = ["ask", "review", "adversarial-review", "rescue", "transfer"];
+const TEXT_FLAGS = ["file", "live", "max-sources", "max-tokens", "model", "allow-long-context", "coding", "build-unavailable", "background"];
+const COMMAND_FLAGS = {
+  ...Object.fromEntries(TEXT_COMMANDS.map((command) => [command, TEXT_FLAGS])),
+  imagine: ["source", "out", "model"],
+  video: ["seconds", "confirm-cost", "from-image", "wait", "out", "model"],
+  speak: ["voice", "language", "out", "text-file"],
+  transcribe: ["file", "language", "model"],
+  status: ["id"], cancel: ["id"], result: ["id", "out"], setup: ["gate"],
+  "background-worker": []
+};
+const KNOWN_FLAGS = new Set(Object.values(COMMAND_FLAGS).flat());
+const BOOLEAN_FLAGS = new Set(["live", "background", "allow-long-context", "wait", "coding", "build-unavailable", "confirm-cost"]);
+
 function parse(argv) {
   const [command, ...rest] = argv;
+  if (!command) throw runtimeError("usage", "missing command");
+  if (!Object.hasOwn(COMMAND_FLAGS, command)) throw runtimeError("usage", `unknown command: ${command}`);
   const flags = { file: [], source: [] };
   const positionals = [];
-  const booleanFlags = new Set(["live", "background", "allow-long-context", "wait", "coding", "build-unavailable"]);
   for (let index = 0; index < rest.length; index += 1) {
     const item = rest[index];
+    if (item === "--") { positionals.push(...rest.slice(index + 1)); break; }
     if (!item.startsWith("--")) { positionals.push(item); continue; }
     const key = item.slice(2);
-    if (booleanFlags.has(key)) { flags[key] = true; continue; }
+    if (!KNOWN_FLAGS.has(key)) throw runtimeError("usage", `unsupported flag: --${key}`);
+    if (!Object.hasOwn(COMMAND_FLAGS, command) || !COMMAND_FLAGS[command].includes(key)) throw runtimeError("usage", `${command} does not support --${key}`);
+    if (BOOLEAN_FLAGS.has(key)) { flags[key] = true; continue; }
     const value = rest[++index];
     if (!value || value.startsWith("--")) throw runtimeError("usage", `--${key} requires a value`);
     if (["file", "source"].includes(key)) flags[key].push(value); else flags[key] = value;
+  }
+  for (const [key, max] of [["max-tokens", 131072], ["max-sources", Number.MAX_SAFE_INTEGER]]) {
+    if (flags[key] === undefined) continue;
+    const number = /^[0-9]+$/.test(flags[key]) ? Number(flags[key]) : NaN;
+    if (!Number.isSafeInteger(number) || number < 1 || number > max) throw runtimeError("usage", `--${key} must be a positive integer${key === "max-tokens" ? " up to 131072" : ""}`);
+    flags[key] = number;
   }
   return { command, flags, prompt: positionals.join(" ").trim() };
 }
@@ -107,7 +171,7 @@ function preflight(deps, text) {
 
 // Provider content must not be able to close the envelope early.
 const neutralize = (text) => String(text ?? "").replaceAll("[/UNTRUSTED-EXTERNAL-CONTENT]", "[\\/UNTRUSTED-EXTERNAL-CONTENT]");
-const envelope = (text) => `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(text)}\n[/UNTRUSTED-EXTERNAL-CONTENT]`;
+export const envelope = (text) => `[UNTRUSTED-EXTERNAL-CONTENT]\n${neutralize(text)}\n[/UNTRUSTED-EXTERNAL-CONTENT]`;
 
 function write(deps, value) {
   const clean = deps.scrub.scrubDeep(value);
@@ -121,34 +185,129 @@ function attachmentContent(deps, flags) {
   return { content: attached.parts, tokenEstimate: attached.tokenEstimate };
 }
 
-async function delegation(command, flags, prompt, deps) {
+// Every foreground check, with no billed request. A stored route (background worker) skips the catalog.
+async function prepareDelegation(command, flags, prompt, deps, route) {
+  if (!prompt && !flags.file.length) {
+    if (["review", "adversarial-review"].includes(command)) prompt = gatherDiff(deps.git);
+    else throw runtimeError("usage", `${command} requires a prompt or --file`);
+  }
   if (flags.live && flags.file.length) throw runtimeError("usage", "--live cannot be combined with --file (live search sends only the prompt); ask without --live, or paste the needed text into the prompt");
   preflight(deps, prompt);
   const attachment = attachmentContent(deps, flags);
   const needsImageInput = (attachment.content ?? []).some((part) => part?.type === "image_url");
-  const routing = await selectModel(roleFor(command, flags), flags, deps.ctx, { needsImageInput });
+  const routing = route ?? await selectModel(roleFor(command, flags), flags, deps.ctx, { needsImageInput });
+  return { command, flags, prompt, attachment, routing };
+}
+
+// Sends the one request and returns exactly what foreground prints.
+async function sendDelegation({ command, flags, prompt, attachment, routing }, deps) {
+  const limit = flags["max-tokens"] ? { maxTokens: flags["max-tokens"] } : {};
   if (flags.live) {
     const response = await deps.api.respond({
       model: routing.model,
       input: [{ role: "system", content: LIVE_SYSTEM }, { role: "user", content: prompt }],
-      tools: [{ type: "web_search" }, { type: "x_search" }]
+      tools: [{ type: "web_search" }, { type: "x_search" }],
+      ...limit
     });
-    let maxSources = response.citations.length;
-    if (flags["max-sources"] !== undefined) {
-      maxSources = Number(flags["max-sources"]);
-      if (!Number.isInteger(maxSources) || maxSources < 1) throw runtimeError("usage", "--max-sources must be a positive integer");
-    }
-    const citations = response.citations.slice(0, maxSources);
+    const citations = response.citations.slice(0, flags["max-sources"] ?? response.citations.length);
     // Citation fields print outside the envelope, so one line each: no injected `Route:` or envelope lines.
     const oneLine = (text) => neutralize(text).replace(/[\r\n\u2028\u2029]+/g, " ");
-    write(deps, `${envelope(response.content)}\nSources:\n${citations.map((item) => `- ${oneLine(item.title)}: ${oneLine(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}\nRoute: ${JSON.stringify(routeMeta(routing))}`);
-    return;
+    return `${envelope(response.content)}\nSources:\n${citations.map((item) => `- ${oneLine(item.title)}: ${oneLine(item.url)}`).join("\n")}\nUsage: ${JSON.stringify(response.usage ?? {})}\nRoute: ${JSON.stringify(routeMeta(routing))}`;
   }
   const message = attachment.content ? [...attachment.content, ...(prompt ? [{ type: "text", text: prompt }] : [])] : prompt;
   const preset = loadPreset(command);
   const messages = [...(preset ? [{ role: "system", content: preset }] : []), { role: "user", content: message }];
-  const response = await deps.api.chat({ model: routing.model, messages });
-  write(deps, { ...routeMeta(routing), content: response.content, usage: response.usage ?? {} });
+  const response = await deps.api.chat({ model: routing.model, messages, ...limit });
+  return { ...routeMeta(routing), content: response.content, usage: response.usage ?? {} };
+}
+
+// The job holds the arguments, never file content or a diff: the worker reads them again. The key stays in the environment.
+function startBackground(argv, routing, deps) {
+  const [command, ...rest] = argv;
+  const end = rest.indexOf("--");
+  const args = rest.filter((item, index) => item !== "--background" || (end >= 0 && index > end));
+  const route = routeMeta(routing);
+  const id = deps.jobs.createJob({ kind: "text", request: { command, args, cwd: process.cwd(), route } });
+  // Nothing is written after the spawn: the worker stores its own pid, and a worker that never starts shows as not_started.
+  deps.spawnWorker(id);
+  return { id, kind: "text", state: "created", command, ...route };
+}
+
+function spawnWorker(id) {
+  const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "background-worker", id], { detached: true, stdio: "ignore", windowsHide: true });
+  child.on("error", () => {});
+  child.unref();
+  return child.pid;
+}
+
+// Single use: only the first worker to claim a created text job runs it, so a job sends at most one request. Never retried.
+async function backgroundWorker(id, deps) {
+  const job = deps.jobs.getJob(id);
+  if (job?.kind !== "text" || job.state !== "created" || !deps.jobs.claimJob(id)) return;
+  deps.jobs.updateJob(id, { state: "running", pid: process.pid });
+  let patch;
+  try {
+    let prepared;
+    try {
+      const { command, args, cwd, route } = job.request;
+      process.chdir(cwd);
+      const parsed = parse([command, ...args]);
+      prepared = await prepareDelegation(parsed.command, parsed.flags, parsed.prompt, deps, route);
+    } catch (error) {
+      throw runtimeError(error?.error_class ?? "usage", `${error?.message ?? error}; nothing was sent`);
+    }
+    if (deps.jobs.getJob(id)?.state === "abandoned") return;
+    patch = { state: "done", result: { output: await sendDelegation(prepared, deps) } };
+  } catch (error) {
+    patch = { state: "failed", error: { error_class: EXIT_CODES[error?.error_class] ? error.error_class : "usage", message: String(error?.message ?? "runtime error"), retryable: false } };
+  }
+  if (deps.jobs.getJob(id)?.state !== "abandoned") deps.jobs.updateJob(id, patch);
+}
+
+// The 300-second request timeout plus a margin.
+const STALE_TEXT_MS = 6 * 60 * 1000;
+const UNCLAIMED_TEXT_MS = 60 * 1000;
+const UNKNOWN = { state: "submission_unknown", note: "the worker stopped reporting; the request may have been billed and is never re-sent" };
+// A created job with no claim file was never picked up by a worker, so nothing was sent.
+const staleText = (deps) => (job) => {
+  if (job?.kind !== "text") return job;
+  const age = Date.now() - Date.parse(job.createdAt);
+  if (job.state === "created" && age > UNCLAIMED_TEXT_MS) {
+    return { ...job, ...(deps.jobs.isClaimed(job.id) ? UNKNOWN : { state: "not_started", note: "the worker never claimed this job; nothing was sent" }) };
+  }
+  return job.state === "running" && age > STALE_TEXT_MS ? { ...job, ...UNKNOWN } : job;
+};
+
+export function processQueryCommand(pid, platform = process.platform, systemRoot = process.env.SystemRoot || "C:\\Windows") {
+  if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("pid must be a positive safe integer");
+  if (platform === "win32") return [win32.join(systemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"), ["-NoProfile", "-NonInteractive", "-Command", `(Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}').CommandLine`]];
+  return ["ps", ["-o", "args=", "-p", String(pid)]];
+}
+
+function queryProcess(pid) {
+  const [file, args] = processQueryCommand(pid);
+  const result = spawnSync(file, args, { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  if (result.error || result.status !== 0) throw result.error ?? new Error("process query failed");
+  return result.stdout.trim();
+}
+
+// D17: a worker is killed only when its command line names this job; otherwise the job is abandoned locally.
+async function cancelCommand(id, deps) {
+  const job = deps.jobs.getJob(id);
+  if (job?.kind !== "text") return deps.jobs.cancelJob(id);
+  if (!["created", "running"].includes(job.state)) return job;
+  let cancellation = "local-abandon";
+  if (Number.isSafeInteger(job.pid) && job.pid > 0) {
+    let commandLine = "";
+    try { commandLine = String(await deps.processQuery(job.pid) ?? ""); } catch { /* unverifiable: never kill */ }
+    if (commandLine.includes("background-worker") && commandLine.includes(job.id)) {
+      cancellation = "confirmed";
+      try { deps.killProcess(job.pid); } catch (error) { if (error?.code !== "ESRCH") cancellation = "local-abandon"; }
+    }
+  }
+  const updated = deps.jobs.updateJob(id, { state: "abandoned", cancellation });
+  const note = cancellation === "confirmed" ? "the worker was stopped; the request may still be billed" : "the worker was not stopped and may run for up to 5 minutes; the request may still be billed";
+  return { ...updated, note };
 }
 
 async function commandVideo(flags, prompt, deps) {
@@ -156,8 +315,10 @@ async function commandVideo(flags, prompt, deps) {
   const seconds = Number(flags.seconds);
   if (!Number.isInteger(seconds) || seconds < 1 || seconds > 30) throw runtimeError("usage", "--seconds must be an integer from 1 to 30");
   preflight(deps, prompt);
+  const total = (seconds * 0.08).toFixed(2);
+  if (!flags["confirm-cost"]) throw runtimeError("usage", `video requires --confirm-cost after user approval. Estimate: ${seconds} × $0.08 = $${total} (starting rate, unverified; the price varies by model and resolution). Nothing was sent.`);
   const route = routeMeta(await selectModel("video", flags, deps.ctx, { needsImageInput: Boolean(flags["from-image"]) }));
-  write(deps, `${seconds} × $0.08 = $${(seconds * 0.08).toFixed(2)} (unverified estimate; actual price depends on model ${route.model})`);
+  write(deps, `${seconds} × $0.08 = $${total} (unverified estimate; actual price depends on model ${route.model})`);
   const id = deps.jobs.createJob({ kind: "video", request: { prompt, seconds, ...route } });
   try {
     const created = await deps.media.createVideoJob({ prompt, seconds, fromImage: flags["from-image"], model: route.model });
@@ -186,7 +347,7 @@ async function refreshJob(deps, id) {
   if (job.kind === "video" && job.providerJobId && !["done", "failed", "abandoned", "submission_unknown"].includes(job.state)) {
     return deps.jobs.refresh(id, (providerJobId) => deps.media.pollVideo(providerJobId));
   }
-  return job;
+  return staleText(deps)(job);
 }
 
 async function commandImagine(flags, prompt, deps) {
@@ -201,17 +362,8 @@ async function commandImagine(flags, prompt, deps) {
   write(deps, { ...saved, ...route });
 }
 
-const AUDIO_FLAGS = { speak: ["voice", "language", "out", "text-file"], transcribe: ["file", "language", "model"] };
 const MAX_SPEECH_CHARS = 60_000;
 const MAX_TEXT_FILE_BYTES = 1024 * 1024;
-
-// parse accepts any flag name, so audio commands allow only their own.
-function checkAudioFlags(command, flags) {
-  for (const [key, value] of Object.entries(flags)) {
-    if (Array.isArray(value) && !value.length) continue;
-    if (!AUDIO_FLAGS[command].includes(key)) throw runtimeError("usage", `${command} does not support --${key}`);
-  }
-}
 
 function checkSourcePath(deps, file) {
   const result = deps.scrub.preflight("", { sourcePath: file });
@@ -287,21 +439,18 @@ async function commandTranscribe(flags, prompt, deps) {
 export async function main(argv, suppliedDeps = {}) {
   const deps = {
     api: apiRuntime, media: mediaRuntime, jobs: jobsRuntime, scrub: scrubRuntime, attach: attachRuntime, models: modelsRuntime,
-    env: process.env, home: homedir(), stdout: process.stdout, ...suppliedDeps
+    env: process.env, home: companionHome(), stdout: process.stdout,
+    spawnWorker, processQuery: queryProcess, killProcess: (pid) => process.kill(pid), repoRoot: () => repoRoot(), git: runGit, ...suppliedDeps
   };
   deps.ctx = { models: deps.models, env: deps.env, catalog: catalogContext(deps) };
   try {
     const { command, flags, prompt } = parse(argv);
-    if (!command) throw runtimeError("usage", "missing command");
-    if (["ask", "review", "adversarial-review", "rescue", "transfer"].includes(command)) {
-      let effectivePrompt = prompt;
-      if (!effectivePrompt && !flags.file.length) {
-        if (["review", "adversarial-review"].includes(command)) effectivePrompt = gatherDiff();
-        else throw runtimeError("usage", `${command} requires a prompt or --file`);
-      }
-      await delegation(command, flags, effectivePrompt, deps);
+    if (TEXT_COMMANDS.includes(command)) {
+      const prepared = await prepareDelegation(command, flags, prompt, deps);
+      write(deps, flags.background ? startBackground(argv, prepared.routing, deps) : await sendDelegation(prepared, deps));
+    } else if (command === "background-worker") {
+      await backgroundWorker(prompt, deps);
     } else if (command === "speak" || command === "transcribe") {
-      checkAudioFlags(command, flags);
       await (command === "speak" ? commandSpeak : commandTranscribe)(flags, prompt, deps);
     } else if (command === "imagine") {
       if (!prompt) throw runtimeError("usage", "imagine requires a prompt");
@@ -310,10 +459,14 @@ export async function main(argv, suppliedDeps = {}) {
       if (!prompt) throw runtimeError("usage", "video requires a prompt");
       await commandVideo(flags, prompt, deps);
     } else if (command === "status") {
-      write(deps, flags.id ? await refreshJob(deps, flags.id) : deps.jobs.listJobs());
+      write(deps, flags.id ? await refreshJob(deps, flags.id) : deps.jobs.listJobs().map(staleText(deps)));
     } else if (command === "result") {
       if (!flags.id) throw runtimeError("usage", "result requires --id");
       let job = await refreshJob(deps, flags.id);
+      if (job.kind === "text" && job.state === "done") {
+        write(deps, job.result.output);
+        return 0;
+      }
       if (job.state === "done" && job.result?.url && !job.result.artifactPath) {
         const artifact = await deps.media.downloadArtifact(job.result.url, undefined, { out: flags.out });
         job = { ...job, result: { ...job.result, artifactPath: artifact.path } };
@@ -321,11 +474,15 @@ export async function main(argv, suppliedDeps = {}) {
       write(deps, job);
     } else if (command === "cancel") {
       if (!flags.id) throw runtimeError("usage", "cancel requires --id");
-      write(deps, await deps.jobs.cancelJob(flags.id));
+      write(deps, await cancelCommand(flags.id, deps));
     } else if (command === "setup") {
+      // The toggle is applied before the key check, so it works without a key.
+      const root = flags.gate === undefined ? deps.repoRoot() : setGate(flags.gate, deps);
+      const { gateRepos = [] } = readConfig(deps.home);
+      const gate = { stopReviewGate: Boolean(root) && Array.isArray(gateRepos) && gateRepos.includes(root), gateRepos };
       const keyPresent = Boolean(deps.env.XAI_API_KEY);
       if (!keyPresent) {
-        write(deps, { keyPresent, apiReachable: false, models: [], routes: {}, stopReviewGate: false, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
+        write(deps, { keyPresent, apiReachable: false, models: [], routes: {}, ...gate, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
         return EXIT_CODES.auth;
       }
       const catalog = await deps.ctx.catalog({ fresh: true });
@@ -337,7 +494,7 @@ export async function main(argv, suppliedDeps = {}) {
         try { routes[role] = routeMeta(await selectModel(role, {}, deps.ctx)); } catch (error) { routes[role] = { error_class: error.error_class ?? "usage", message: String(error.message) }; }
       }
       const catalogSources = Object.fromEntries(Object.entries(catalog.kinds).map(([kind, state]) => [kind, state.source]));
-      write(deps, { keyPresent, apiReachable: kinds.every((state) => state.source === "live"), catalogSources, models, routes, stopReviewGate: false, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
+      write(deps, { keyPresent, apiReachable: kinds.every((state) => state.source === "live"), catalogSources, models, routes, ...gate, imageDefaultOverride: "Grok overrides prior companion policy for raster image generation." });
     } else throw runtimeError("usage", `unknown command: ${command}`);
     return 0;
   } catch (error) {
