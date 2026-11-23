@@ -13,6 +13,8 @@ Use `node "${CLAUDE_PLUGIN_ROOT}/scripts/grok-companion.mjs" <command> [flags]`.
 | `review`, `adversarial-review`, `rescue`, `transfer` | Explicit delegation paths |
 | `imagine` | Raster image generation with up to three source images |
 | `video --seconds <1-30>` | Persistent provider video job |
+| `speak (<text> | --text-file <path>)` | Billed text to MP3 speech, saved locally |
+| `transcribe --file <path>` | Billed transcript of one local MP3 or WAV; `text` and `details` are enveloped |
 | `status`, `result`, `cancel` | JSON job management |
 
 Never pass credentials in arguments or files. The runtime reads `XAI_API_KEY` only from the environment and rejects credential-like content before dispatch. Error JSON uses exit codes 2 through 9.

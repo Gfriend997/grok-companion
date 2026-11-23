@@ -5,7 +5,7 @@
     {
       "name": "grok-companion",
       "source": "./",
-      "description": "Grok delegation, fresh research, image generation, and persistent video jobs for Claude Code."
+      "description": "Grok delegation, fresh research, image generation, persistent video jobs, speech, and transcription for Claude Code."
     }
   ]
 }

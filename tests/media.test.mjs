@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { createMedia, MEDIA_HOSTS } from "../scripts/lib/media.mjs";
+import { createApiClient } from "../scripts/lib/api.mjs";
 
 const outDir = fs.mkdtempSync(path.join(os.tmpdir(), "grok-media-"));
 test.after(() => fs.rmSync(outDir, { recursive: true, force: true }));
@@ -48,4 +49,14 @@ test("pollVideo translates captured done status", async () => {
   const media = createMedia({ apiClient: { requestAuthenticated: async () => ({ status: "done", progress: 100, video: { url: "https://vidgen.x.ai/a.mp4" }, usage: { cost_in_usd_ticks: 5 } }) } });
   assert.deepEqual(await media.pollVideo("job-1"), { state: "done", progress: 100, url: "https://vidgen.x.ai/a.mp4", usageTicks: 5 });
   assert.deepEqual(MEDIA_HOSTS, ["imgen.x.ai", "vidgen.x.ai"]);
+});
+
+test("imagine and video send one request on a 503 and report it as not retryable", async () => {
+  let calls = 0;
+  const apiClient = createApiClient({ env: { XAI_API_KEY: "test-key-not-for-logs" }, fetchImpl: async () => { calls += 1; return new Response('{"error":"down"}', { status: 503 }); } });
+  const media = createMedia({ apiClient });
+  await assert.rejects(media.generateImage({ prompt: "apple", sources: [], model: "m" }), (error) => error.retryable === false);
+  assert.equal(calls, 1);
+  await assert.rejects(media.createVideoJob({ prompt: "apple", seconds: 2, model: "m" }), (error) => error.retryable === false);
+  assert.equal(calls, 2);
 });

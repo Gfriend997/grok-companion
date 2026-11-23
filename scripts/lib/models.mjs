@@ -17,7 +17,7 @@ const STALE_MS = 7 * 24 * 60 * 60 * 1000;
 const NEGATIVE_MS = 5 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 5000;
 const MAX_CATALOG_BYTES = 1_000_000;
-const ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/;
+export const ID_PATTERN = /^[a-z0-9][a-z0-9.-]{0,63}$/;
 const validId = (value) => typeof value === "string" && ID_PATTERN.test(value);
 const strings = (value) => (Array.isArray(value) ? value.filter((item) => typeof item === "string") : []);
 

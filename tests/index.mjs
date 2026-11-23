@@ -7,3 +7,4 @@ import "./media.test.mjs";
 import "./models.test.mjs";
 import "./packaging.test.mjs";
 import "./scrub.test.mjs";
+import "./speak-transcribe.test.mjs";

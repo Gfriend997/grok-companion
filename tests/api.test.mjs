@@ -14,15 +14,27 @@ test("authenticated requests use only the exact API host and bearer header", asy
   await assert.rejects(() => api.requestAuthenticated("https://example.com/nope"), /path must start/);
 });
 
-test("chat retries a transient server response then returns parsed content", async () => {
+test("chat does not automatically resubmit a billable server failure", async () => {
   let calls = 0;
-  const api = createApiClient({ env, sleep: async () => {}, fetchImpl: async () => {
+  const api = createApiClient({ env, fetchImpl: async () => {
     calls += 1;
     return calls === 1 ? new Response('{"error":"temporary"}', { status: 503 }) : ok({ choices: [{ message: { content: "pong" } }], usage: { total_tokens: 2 } });
   } });
-  const result = await api.chat({ model: "grok-4.3", messages: [{ role: "user", content: "ping" }] });
-  assert.equal(calls, 2);
-  assert.equal(result.content, "pong");
+  await assert.rejects(api.chat({ model: "grok-4.3", messages: [{ role: "user", content: "ping" }] }), (error) => error.error_class === "network" && error.retryable === false);
+  assert.equal(calls, 1);
+});
+
+test("every failed non-GET request is not retryable, including 429; GET keeps its retryable value", async () => {
+  for (const status of [503, 429]) {
+    const api = createApiClient({ env, fetchImpl: async () => new Response('{"error":"busy"}', { status }) });
+    await assert.rejects(api.requestAuthenticated("/chat/completions", { method: "POST", body: {} }), (error) => error.retryable === false, String(status));
+  }
+  const thrown = createApiClient({ env, fetchImpl: async () => { throw new TypeError("fetch failed"); } });
+  await assert.rejects(thrown.requestAuthenticated("/tts", { method: "POST", body: {} }), (error) => error.error_class === "network" && error.retryable === false && /may already have been accepted/.test(error.message));
+  const timeout = createApiClient({ env, fetchImpl: async () => { throw Object.assign(new Error("aborted"), { name: "AbortError" }); } });
+  await assert.rejects(timeout.requestAuthenticated("/tts", { method: "POST", body: {} }), (error) => error.retryable === false && /timed out; submission may already have been accepted/.test(error.message));
+  const get = createApiClient({ env, fetchImpl: async () => new Response('{"error":"down"}', { status: 503 }) });
+  await assert.rejects(get.requestAuthenticated("/models"), (error) => error.error_class === "network" && error.retryable === true);
 });
 
 test("chat does not retry a client error or expose the key", async () => {
@@ -89,4 +101,55 @@ test("the byte cap cancels an oversized streamed body before buffering it", asyn
   await assert.rejects(() => api.requestAuthenticated("/language-models", { maxBytes: 1000 }), (error) => error.error_class === "network" && /too large/.test(error.message));
   assert.equal(cancelled, true);
   assert.ok(pulled < 10, `stopped early (pulled ${pulled} chunks)`);
+});
+
+test("multipart keeps the native boundary and file-last field order with no JSON content type", async () => {
+  const formData = new FormData();
+  formData.append("model", "grok-voice-transcribe-2.0");
+  formData.append("language", "en");
+  formData.append("file", new Blob(["audio"]), "sample.mp3");
+  const api = createApiClient({ env, fetchImpl: async (url, init) => {
+    assert.equal(url, "https://api.x.ai/v1/stt");
+    assert.equal(init.headers.Authorization, `Bearer ${env.XAI_API_KEY}`);
+    assert.equal(init.headers["Content-Type"], undefined);
+    assert.equal(init.redirect, "error");
+    const request = new Request(url, init);
+    assert.match(request.headers.get("content-type"), /^multipart\/form-data; boundary=/);
+    const received = await request.formData();
+    assert.deepEqual([...received.keys()], ["model", "language", "file"]);
+    assert.equal(await received.get("file").text(), "audio");
+    return ok({ text: "hello" });
+  } });
+  assert.deepEqual(await api.requestAuthenticated("/stt", { method: "POST", formData, maxBytes: 1024 }), { text: "hello" });
+});
+
+test("bytes mode returns the exact Buffer", async () => {
+  const bytes = Buffer.from([0xff, 0xfb, 0, 0x80]);
+  const api = createApiClient({ env, fetchImpl: async () => new Response(bytes) });
+  const result = await api.requestAuthenticated("/tts", { method: "POST", body: { text: "hello" }, responseType: "bytes", maxBytes: 4 });
+  assert.ok(Buffer.isBuffer(result));
+  assert.deepEqual(result, bytes);
+});
+
+test("invalid body and response-mode combinations fail before dispatch", async () => {
+  let calls = 0;
+  const api = createApiClient({ env, fetchImpl: async () => { calls += 1; return ok({}); } });
+  for (const options of [{ body: {}, formData: new FormData() }, { formData: {} }, { responseType: "text" }, { responseType: "bytes" }]) {
+    await assert.rejects(api.requestAuthenticated("/tts", { method: "POST", ...options }), (error) => error.error_class === "usage", JSON.stringify(options));
+  }
+  assert.equal(calls, 0);
+});
+
+test("bytes mode still classifies a provider error from its JSON body", async () => {
+  const denied = createApiClient({ env, fetchImpl: async () => new Response('{"error":"denied"}', { status: 401 }) });
+  await assert.rejects(denied.requestAuthenticated("/tts", { method: "POST", body: {}, responseType: "bytes", maxBytes: 100 }),
+    (error) => error.error_class === "auth" && error.message === "denied" && error.retryable === false);
+});
+
+test("review fix: a POST body read that fails or times out is network, not retryable, and says it may be accepted", async () => {
+  const stalled = { ok: true, status: 200, headers: new Headers(), text: async () => { throw Object.assign(new Error("aborted"), { name: "AbortError" }); } };
+  const api = createApiClient({ env, fetchImpl: async () => stalled });
+  await assert.rejects(() => api.chat({ model: "m", messages: [] }), (error) => error.error_class === "network" && error.retryable === false && /read failed; submission may already have been accepted/.test(error.message));
+  const big = createApiClient({ env, fetchImpl: async () => new Response("x".repeat(20), { status: 200 }) });
+  await assert.rejects(() => big.requestAuthenticated("/tts", { method: "POST", body: {}, responseType: "bytes", maxBytes: 5 }), (error) => error.retryable === false && /too large; submission may already have been accepted/.test(error.message));
 });
